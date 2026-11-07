@@ -1,0 +1,38 @@
+name: full check
+
+# The slow, exhaustive version of the centring check: every installed Yaru variant, ~400 real symbols each.
+# Not run on every push: start it by hand (Actions -> full check -> Run workflow), e.g. before a release
+# or after Yaru changes.
+on:
+  workflow_dispatch:
+
+jobs:
+  full:
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies and the Yaru icon themes
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates git yaru-theme-icon python3-pil python3-numpy \
+            python3-scipy python3-pytest librsvg2-bin
+
+      - name: Unit and integration tests
+        run: python3 -m pytest -q
+
+      - name: Generate a sample set for every installed Yaru variant
+        run: |
+          python3 yaru-folder-icon.py batch --icons-root /usr/share/icons --out dist --themes all --sizes 256 \
+            --only '^(a|c|d|e|network-w|share|view-)' | tail -3
+
+      - name: Check every generated icon is centred (all variants)
+        run: |
+          failed=0
+          for d in dist/*/256; do
+            echo "== $d"
+            python3 tools/check_centering.py "$d" --max-offset 1.0 > /tmp/c.txt || failed=1
+            head -3 /tmp/c.txt
+          done
+          test "$failed" -eq 0
