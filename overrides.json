@@ -1,0 +1,5 @@
+{
+  "_comment": "Per-symbol tweaks. scale multiplies the symbol size, dx/dy shift it (fraction of icon size), align overrides --align. Wide, thin-grid symbols that come out too small go here.",
+  "adaptive": {"scale": 1.6},
+  "device-support-adaptive": {"scale": 1.65}
+}

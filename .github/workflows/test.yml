@@ -1,0 +1,61 @@
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # the same Ubuntu release (and so the same Yaru) the icons are developed against
+    container: ubuntu:26.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies and the Yaru icon themes
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates git yaru-theme-icon python3-pil python3-numpy \
+            python3-scipy python3-pytest librsvg2-bin
+
+      - name: Unit and integration tests
+        run: python3 -m pytest -v
+
+      - name: Generate a sample set for every installed Yaru variant
+        run: |
+          python3 yaru-folder-icon.py batch --out dist --themes all --sizes 256 \
+            --only '^(a|c|d|e|network-w|share|view-)' --jobs 4 | tail -3
+          ls dist
+
+      - name: Generate SVG sample set and check it renders
+        run: |
+          python3 yaru-folder-icon.py batch --out dist-svg --themes all --sizes svg \
+            --only '^(a|c|d|e|network-w|share|view-)' --jobs 4 | tail -3
+          test "$(find dist-svg -name '*.svg' | wc -l)" -gt 100
+          for f in $(find dist-svg -name 'share.svg'); do rsvg-convert -w 128 "$f" > /dev/null; done
+
+      - name: Help is printed without arguments
+        run: python3 yaru-folder-icon.py | grep -q -- --skip-existing
+
+      - name: Check every generated icon is centred
+        run: |
+          for d in dist/*/256; do
+            echo "== $d"
+            python3 tools/check_centering.py "$d" --max-offset 1.0 | head -3
+            python3 tools/check_centering.py "$d" --max-offset 1.0 > /dev/null
+          done
+
+      - name: Contact sheets for eyeballing
+        if: always()
+        run: |
+          mkdir -p sheets
+          for t in Yaru Yaru-dark Yaru-purple-dark; do
+            [ -d dist/$t/256 ] && python3 tools/contact_sheet.py dist/$t/256 sheets/$t.png --every 4 || true
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contact-sheets
+          path: sheets/

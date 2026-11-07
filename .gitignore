@@ -1,0 +1,8 @@
+.idea/
+__pycache__/
+*.pyc
+.pytest_cache/
+# generated icon sets and screenshots of experiments go to Releases, not to git
+dist/
+dist-svg/
+*.zip
