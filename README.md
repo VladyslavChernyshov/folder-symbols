@@ -1,4 +1,4 @@
-# yaru-folder-icons
+# Folder Symbols
 
 Custom folder icons for Ubuntu's **Yaru** theme: Yaru's own folder with a symbol on it, drawn in
 Yaru's embossed style, for every Yaru colour variant (light/dark, all accents, MATE).
@@ -17,7 +17,7 @@ every command and option.
 
 ```bash
 sudo apt install python3-pil python3-numpy python3-scipy librsvg2-bin
-git clone https://github.com/VladyslavChernyshov/yaru-folder-icons && cd yaru-folder-icons
+git clone https://github.com/VladyslavChernyshov/folder-symbols && cd folder-symbols
 
 # put a "community" symbol on ~/Music using your current icon theme
 ./yaru-folder-icon.py apply ~/Music community
