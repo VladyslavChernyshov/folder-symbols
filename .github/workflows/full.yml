@@ -15,9 +15,14 @@ jobs:
 
       - name: Install dependencies and the Yaru icon themes
         run: |
-          apt-get update
-          apt-get install -y ca-certificates git yaru-theme-icon python3-pil python3-numpy \
-            python3-scipy python3-pytest librsvg2-bin
+          # the Ubuntu archive is sometimes unreachable from the runners: retry instead of failing
+          ok=0
+          for attempt in 1 2 3 4; do
+            if apt-get update -o Acquire::Retries=5 &&
+               apt-get install -y -o Acquire::Retries=5 ca-certificates git yaru-theme-icon python3-pil python3-numpy  python3-scipy python3-pytest librsvg2-bin; then ok=1; break; fi
+            echo "apt failed (attempt $attempt), retrying in 30 s"; sleep 30
+          done
+          [ "$ok" = 1 ]
 
       - name: Unit and integration tests
         run: python3 -m pytest -q
