@@ -12,7 +12,10 @@ The window sits on a diagonal gradient in the colours of Ubuntu's wallpaper (ora
 aubergine top right); --background transparent keeps the bare window with its shadow instead.
 
 Usage: make_screenshot.py [--symbols-dir /usr/share/icons/Yaru/scalable] [--out docs/screenshot.png]
-                          [--background gradient|transparent] [--margin 40]
+                          [--background gradient|transparent] [--margin 40] [--grid 6x4] [--size WxH]
+
+GitHub's social preview is a wider picture on a 1280x640 canvas, eight columns by three rows:
+  make_screenshot.py --grid 8x3 --size 1280x640 --out docs/social-preview.png
 """
 import argparse, importlib.util, os, sys
 import numpy as np
@@ -27,7 +30,12 @@ NAMES = ["applications-development", "applications-games", "applications-graphic
          "library-music", "mail-unread", "network-wireless", "preferences-system", "printer"]
 ACCENTS = ["Yaru", "Yaru-blue", "Yaru-purple", "Yaru-red", "Yaru-viridian", "Yaru-magenta",
            "Yaru-prussiangreen", "Yaru-olive", "Yaru-sage", "Yaru-bark", "Yaru-wartybrown", "Yaru-yellow"]
-COLS, ROWS = 6, 4
+LABEL_COLS = 6                       # columns of the labels sheet (24 labels, 6 x 4, in NAMES order)
+GRIDS = ("6x4", "8x3")               # 24 folders: an even number of columns, half light, half dark
+# the path bar of the real screenshot reads "yaru-icons-demo"; its "icons" is cut out and used as the
+# whole folder name (x ranges and rows are in the compact frame, 1x)
+TITLE_ROWS, TITLE_TEXT = (36, 62), (293, 408)
+TITLE_ICONS = (329, 363)
 # Ubuntu wallpaper colours along the diagonal from bottom left to top right (measured from the desktop)
 GRADIENT = [(0.0, (225, 95, 44)), (0.5, (148, 58, 69)), (1.0, (97, 33, 77))]
 # geometry of the compact screenshot (see prepare_screenshot_parts.py)
@@ -42,13 +50,24 @@ def load_script():
     return m
 
 
-def frame(theme):
+def retitle(im):
+    """Replace the demo folder's name in the path bar by 'icons' (same font, cut from the same word)."""
+    y0, y1 = TITLE_ROWS
+    x0, x1 = TITLE_TEXT
+    cut = im[y0:y1, TITLE_ICONS[0]:TITLE_ICONS[1]].copy()
+    im[y0:y1, x0:x1] = im[y0:y1, x1 + 2:x1 + 3]                     # pill background
+    im[y0:y1, x0:x0 + cut.shape[1]] = cut
+    return im
+
+
+def frame(theme, cols, rows):
     """Compact window, grid area resized to ROWS rows and widened by one column pitch per extra column."""
     im = np.array(Image.open(os.path.join(PARTS, f"frame-{theme}.png")).convert("RGBA"))
-    new_body = GRID_BOTTOM - GRID_TOP - 2 * PITCH_Y                       # six rows -> four rows
+    im = retitle(im)
+    new_body = GRID_BOTTOM - GRID_TOP - (6 - rows) * PITCH_Y             # six rows -> `rows` rows
     body = np.repeat(im[GRID_TOP + 4:GRID_TOP + 5], new_body, axis=0)
     im = np.concatenate([im[:GRID_TOP], body, im[GRID_BOTTOM:]], axis=0)
-    extra = (COLS - 5) * PITCH_X
+    extra = (cols - 5) * PITCH_X
     return np.concatenate([im[:, :WIDEN_AT], np.repeat(im[:, WIDEN_AT:WIDEN_AT + 1], extra, axis=1),
                            im[:, WIDEN_AT:]], axis=1)
 
@@ -78,37 +97,64 @@ def main():
                    help="gradient: Ubuntu-wallpaper colours behind the window (default); transparent: none")
     p.add_argument("--margin", type=int, default=40,
                    help="extra space around the window (it already has a shadow margin), px. Default: 40")
+    p.add_argument("--grid", choices=GRIDS, default="6x4", help="columns x rows of folders. Default: 6x4")
+    p.add_argument("--size", metavar="WxH",
+                   help="exact canvas size, e.g. 1280x640 (GitHub social preview); the window is centred on the "
+                        "gradient and cropped if it does not fit. Overrides --margin; needs --background gradient")
     a = p.parse_args()
+    size = None
+    if a.size:
+        try:
+            size = tuple(int(v) for v in a.size.lower().split("x"))
+            assert len(size) == 2 and min(size) > 0
+        except (ValueError, AssertionError):
+            sys.exit(f"--size must look like 1280x640, got {a.size!r}")
+        if a.background != "gradient":
+            sys.exit("--size needs --background gradient")
+    cols, rows = (int(v) for v in a.grid.split("x"))
     y = load_script()
     found = y.find_symbols(a.symbols_dir, None)
     missing = [n for n in NAMES if n not in found]
     if missing:
         sys.exit(f"symbols not found in {a.symbols_dir}: {', '.join(missing)}")
     ov = y.load_overrides()
-    light, dark = frame("light"), frame("dark")
-    split = CX0 + PITCH_X * (COLS // 2) - PITCH_X // 2                    # boundary between the middle columns
+    light, dark = frame("light", cols, rows), frame("dark", cols, rows)
+    split = CX0 + PITCH_X * (cols // 2) - PITCH_X // 2                    # boundary between the middle columns
     out = np.concatenate([light[:, :split], dark[:, split:]], axis=1)
     labels = {t: np.array(Image.open(os.path.join(PARTS, f"labels-{t}.png")).convert("RGB")) for t in ("light", "dark")}
     th = TILE_BOTTOM - TILE_TOP
-    for r in range(ROWS):
-        for c in range(COLS):
-            n = NAMES[r * COLS + c]
-            side = "light" if c < COLS // 2 else "dark"
+    for r in range(rows):
+        for c in range(cols):
+            i = r * cols + c
+            n = NAMES[i]
+            lr, lc = divmod(i, LABEL_COLS)                                # position in the labels sheet
+            side = "light" if c < cols // 2 else "dark"
             cx, cy = CX0 + PITCH_X * c, CY0 + PITCH_Y * r
-            tile = labels[side][r * th:(r + 1) * th, c * TILE_W:(c + 1) * TILE_W]
+            tile = labels[side][lr * th:(lr + 1) * th, lc * TILE_W:(lc + 1) * TILE_W]
             out[cy + TILE_TOP:cy + TILE_BOTTOM, cx - TILE_W // 2:cx + TILE_W // 2, :3] = tile
-            accent = ACCENTS[r * (COLS // 2) + c % (COLS // 2)]
+            accent = ACCENTS[r * (cols // 2) + c % (cols // 2)]
             theme = accent + ("" if side == "light" else "-dark")
             o = ov.get(n, {})
             svg = y.make_svg(theme, found[n], o.get("scale", 1.0), o.get("align", "bbox"), o.get("dx", 0.0), o.get("dy", 0.0))
             over(out, y._rasterise(svg, ICON), cx - ICON // 2, cy - ICON // 2)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     if a.background == "gradient":
-        m = max(a.margin, 0)
         h, w = out.shape[:2]
-        canvas = gradient(w + 2 * m, h + 2 * m)
-        al = out[:, :, 3:4] / 255
-        canvas[m:m + h, m:m + w] = out[:, :, :3] * al + canvas[m:m + h, m:m + w] * (1 - al)
+        if size:
+            cw, ch = size
+            canvas = gradient(cw, ch)
+            ox, oy = (cw - w) // 2, (ch - h) // 2                       # negative = window cropped
+            sx, sy = max(-ox, 0), max(-oy, 0)                           # source offset when cropping
+            dx, dy = max(ox, 0), max(oy, 0)
+            ww, hh = min(w - sx, cw - dx), min(h - sy, ch - dy)
+            win = out[sy:sy + hh, sx:sx + ww]
+            al = win[:, :, 3:4] / 255
+            canvas[dy:dy + hh, dx:dx + ww] = win[:, :, :3] * al + canvas[dy:dy + hh, dx:dx + ww] * (1 - al)
+        else:
+            m = max(a.margin, 0)
+            canvas = gradient(w + 2 * m, h + 2 * m)
+            al = out[:, :, 3:4] / 255
+            canvas[m:m + h, m:m + w] = out[:, :, :3] * al + canvas[m:m + h, m:m + w] * (1 - al)
         out = np.dstack([np.clip(canvas + 0.5, 0, 255), np.full(canvas.shape[:2], 255)]).astype(np.uint8)
     Image.fromarray(out, "RGBA").save(a.out, optimize=True)
     print(f"{out.shape[1]}x{out.shape[0]} -> {a.out}")

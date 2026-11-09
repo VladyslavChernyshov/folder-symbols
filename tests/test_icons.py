@@ -347,6 +347,18 @@ def test_make_screenshot(tmp_path):
     r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_screenshot.py"), "--symbols-dir",
                         str(syms), "--out", str(out), "--background", "transparent"], capture_output=True, text=True)
     assert r.returncode == 0 and np.array(Image.open(out)).shape[:2] == (650, 790)
+    # GitHub social preview: 8 x 3 folders on an exact 1280 x 640 canvas, window centred; wrong values are rejected
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_screenshot.py"), "--symbols-dir",
+                        str(syms), "--out", str(out), "--grid", "8x3", "--size", "1280x640"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    sp = np.array(Image.open(out).convert("RGBA")).astype(int)
+    assert sp.shape[:2] == (640, 1280) and sp[:, :, 3].min() == 255
+    assert sp[500, 200, :3].min() > 240 and sp[500, 1080, :3].max() < 60     # light left half, dark right half
+    for bad in (["--size", "big"], ["--size", "1280x640", "--background", "transparent"], ["--grid", "7x3"]):
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_screenshot.py"), "--symbols-dir",
+                            str(syms), "--out", str(out)] + bad, capture_output=True, text=True)
+        assert r.returncode != 0
     # a missing symbol is reported by name
     (syms / "printer-symbolic.svg").unlink()
     r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_screenshot.py"),
