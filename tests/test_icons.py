@@ -1,4 +1,4 @@
-import json, os, subprocess, sys
+import json, os, re, subprocess, sys
 import numpy as np
 import pytest
 from PIL import Image
@@ -366,3 +366,11 @@ def test_make_screenshot(tmp_path):
     r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_screenshot.py"),
                         "--symbols-dir", str(syms), "--out", str(out)], capture_output=True, text=True)
     assert r.returncode != 0 and "printer" in r.stderr
+
+
+def test_version_flag():
+    import subprocess
+    for flag in ("--version", "-V"):
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "yaru-folder-icon.py"), flag],
+                           capture_output=True, text=True, check=True)
+        assert re.fullmatch(r"yaru-folder-icon\.py \d+\.\d+\.\d+\n", r.stdout), r.stdout

@@ -8,6 +8,8 @@ Run without arguments (or with --help) for the full description of every command
 Requires: python3, python3-pil, python3-numpy, python3-scipy, rsvg-convert (librsvg2-bin).
 """
 import argparse, functools, io, json, os, re, subprocess, sys
+
+__version__ = "0.1.0"   # the one place the version lives; tag releases as v<__version__>
 import numpy as np
 from PIL import Image
 from scipy import ndimage as ndi
@@ -725,6 +727,9 @@ def parser_batch():
 
 
 def main(argv):
+    if argv and argv[0] in ("-V", "--version"):
+        print(f"yaru-folder-icon.py {__version__}")
+        return
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(OVERVIEW)
         for name, mk in (("COMPOSE ONE FILE", parser_compose), ("apply", parser_apply),
