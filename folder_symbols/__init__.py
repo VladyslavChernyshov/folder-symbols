@@ -10,4 +10,4 @@ Modules:
   store    the local store: manifest.json (one recipe per folder) and the generated icons
   cli      argument parsers and main()
 """
-__version__ = "0.1.0"   # the one place the version lives; tag releases as v<__version__>
+__version__ = "0.2.0"   # the one place the version lives; tag releases as v<__version__>
