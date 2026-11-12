@@ -17,7 +17,7 @@ Usage: make_screenshot.py [--symbols-dir /usr/share/icons/Yaru/scalable] [--out 
 GitHub's social preview is a wider picture on a 1280x640 canvas, eight columns by three rows:
   make_screenshot.py --grid 8x3 --size 1280x640 --out docs/social-preview.png
 """
-import argparse, importlib.util, os, sys
+import argparse, os, sys
 import numpy as np
 from PIL import Image
 
@@ -44,10 +44,11 @@ TILE_W, TILE_TOP, TILE_BOTTOM, ICON = 118, 30, 84, 64
 
 
 def load_script():
-    spec = importlib.util.spec_from_file_location("yfi", os.path.join(ROOT, "yaru-folder-icon.py"))
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
+    """The folder_symbols modules this tool needs, as one namespace."""
+    sys.path.insert(0, ROOT)
+    from folder_symbols import engine, svg, symbols
+    return argparse.Namespace(find_symbols=symbols.find_symbols, load_overrides=symbols.load_overrides,
+                              make_svg=svg.make_svg, rasterise=engine.rasterise)
 
 
 def retitle(im):
@@ -136,7 +137,7 @@ def main():
             theme = accent + ("" if side == "light" else "-dark")
             o = ov.get(n, {})
             svg = y.make_svg(theme, found[n], o.get("scale", 1.0), o.get("align", "bbox"), o.get("dx", 0.0), o.get("dy", 0.0))
-            over(out, y._rasterise(svg, ICON), cx - ICON // 2, cy - ICON // 2)
+            over(out, y.rasterise(svg, ICON), cx - ICON // 2, cy - ICON // 2)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     if a.background == "gradient":
         h, w = out.shape[:2]

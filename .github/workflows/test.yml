@@ -29,19 +29,19 @@ jobs:
 
       - name: Generate a sample set (four variants)
         run: |
-          python3 yaru-folder-icon.py batch --out dist --themes Yaru,Yaru-dark,Yaru-purple-dark,Yaru-sage --sizes 256 \
+          python3 folder-symbols batch --out dist --themes Yaru,Yaru-dark,Yaru-purple-dark,Yaru-sage --sizes 256 \
             --only '^(a|c|d|e|network-w|share|view-)' --jobs 4 | tail -3
           ls dist
 
       - name: Generate SVG sample set and check it renders
         run: |
-          python3 yaru-folder-icon.py batch --out dist-svg --themes all --sizes svg \
+          python3 folder-symbols batch --out dist-svg --themes all --sizes svg \
             --only '^(a|c|d|e|network-w|share|view-)' --jobs 4 | tail -3
           test "$(find dist-svg -name '*.svg' | wc -l)" -gt 100
           for f in $(find dist-svg -name 'share.svg'); do rsvg-convert -w 128 "$f" > /dev/null; done
 
       - name: Help is printed without arguments
-        run: python3 yaru-folder-icon.py | grep -q -- --skip-existing
+        run: python3 folder-symbols | grep -q -- --skip-existing
 
       - name: Check generated icons are centred
         run: |

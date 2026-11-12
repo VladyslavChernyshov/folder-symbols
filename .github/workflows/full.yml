@@ -29,7 +29,7 @@ jobs:
 
       - name: Generate a sample set for every installed Yaru variant
         run: |
-          python3 yaru-folder-icon.py batch --icons-root /usr/share/icons --out dist --themes all --sizes 256 \
+          python3 folder-symbols batch --icons-root /usr/share/icons --out dist --themes all --sizes 256 \
             --only '^(a|c|d|e|network-w|share|view-)' | tail -3
 
       - name: Check every generated icon is centred (all variants)

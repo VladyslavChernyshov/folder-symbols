@@ -1,19 +1,22 @@
-import importlib.util, os, sys
+import os, sys, types
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, ROOT)
 
 ICONS_ROOT = os.environ.get("YARU_ICONS_ROOT", "/usr/share/icons")
 SYMBOLS_DIR = os.environ.get("YARU_SYMBOLS_DIR", os.path.join(ICONS_ROOT, "Yaru", "scalable"))
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("yfi", os.path.join(ROOT, "yaru-folder-icon.py"))
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
+    """All names of the folder_symbols modules in one namespace, so tests can write g.compose etc."""
+    from folder_symbols import apply, batch, cli, engine, svg, symbols, yaru
+    ns = {}
+    for m in (engine, yaru, symbols, svg, batch, apply, cli):
+        ns.update({k: v for k, v in vars(m).items() if not k.startswith("__")})
+    return types.SimpleNamespace(**ns)
 
 
 @pytest.fixture(scope="session")

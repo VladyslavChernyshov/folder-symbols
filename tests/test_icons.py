@@ -154,7 +154,7 @@ def test_svg_matches_raster(g, themes, theme_name, svg):
     p = svg("sq", SQUARE, 'viewBox="0 0 16 16"')
     text = g.make_svg(f"{ICONS_ROOT}/{theme_name}", p)
     assert g.DUMMY_ACCENT not in text and g.DUMMY_DARK not in text and "<!--SYMBOL" not in text
-    vec = g._rasterise(text, 512)
+    vec = g.rasterise(text, 512)
     ras = np.array(g.compose(themes(theme_name), g.render_symbol(p, 512), 512)).astype(float)
     d = np.abs(_premul(vec) - _premul(ras)).max(2)
     assert d.max() <= 40 and (d > 25).sum() < 400, (d.max(), (d > 25).sum())
@@ -166,16 +166,16 @@ def test_svg_clips_content_outside_viewbox(g, svg, theme_name):
     p = svg("stray", body, 'viewBox="0 0 16 16"')
     q = svg("clean", SQUARE, 'viewBox="0 0 16 16"')
     d = f"{ICONS_ROOT}/{theme_name}"
-    a = g._rasterise(g.make_svg(d, p), 256)
-    b = g._rasterise(g.make_svg(d, q), 256)
+    a = g.rasterise(g.make_svg(d, p), 256)
+    b = g.rasterise(g.make_svg(d, q), 256)
     assert np.abs(a - b).max() <= 1
 
 
 def test_svg_override_scale_applied(g, svg, theme_name):
     p = svg("sq", SQUARE, 'viewBox="0 0 16 16"')
     d = f"{ICONS_ROOT}/{theme_name}"
-    a = g._rasterise(g.make_svg(d, p, scale=0.5), 256)
-    b = g._rasterise(g.make_svg(d, p, scale=1.0), 256)
+    a = g.rasterise(g.make_svg(d, p, scale=0.5), 256)
+    b = g.rasterise(g.make_svg(d, p, scale=1.0), 256)
     assert (a != b).any()
 
 
@@ -185,7 +185,7 @@ def test_svg_cli_extension(tmp_path, svg):
     p = svg("sq", SQUARE, 'viewBox="0 0 16 16"')
     out = tmp_path / "o.svg"
     th = f"{ICONS_ROOT}/{THEMES[0]}"
-    subprocess.run([sys.executable, os.path.join(ROOT, "yaru-folder-icon.py"), th, p, str(out)], check=True)
+    subprocess.run([sys.executable, os.path.join(ROOT, "folder-symbols"), th, p, str(out)], check=True)
     assert out.read_text().startswith("<?xml") or "<svg" in out.read_text()[:400]
 
 
@@ -194,7 +194,7 @@ def test_svg_cli_extension(tmp_path, svg):
 def test_batch_cli(tmp_path):
     out = tmp_path / "dist"
     two = THEMES[:2]
-    subprocess.run([sys.executable, os.path.join(ROOT, "yaru-folder-icon.py"), "batch",
+    subprocess.run([sys.executable, os.path.join(ROOT, "folder-symbols"), "batch",
                     "--icons-root", ICONS_ROOT, "--symbols-dir", SYMBOLS_DIR, "--out", str(out),
                     "--themes", ",".join(two), "--sizes", "256", "--only", "^(share|adaptive)$",
                     "--jobs", "2"], check=True)
@@ -239,7 +239,7 @@ def test_all_sizes(g, themes, theme_name, svg):
 
 
 # ------------------------------------------------------------- help
-SCRIPT = os.path.join(ROOT, "yaru-folder-icon.py")
+SCRIPT = os.path.join(ROOT, "folder-symbols")
 
 
 def _run(*args):
@@ -260,10 +260,7 @@ def test_every_command_has_help_for_every_option():
         r = _run(cmd, "--help")
         assert r.returncode == 0 and "usage:" in r.stdout
     # every option of every command is documented (argparse prints a help text next to it)
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("yfi_h", SCRIPT)
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
+    from folder_symbols import cli as m
     for mk in (m.parser_compose, m.parser_apply, m.parser_reset, m.parser_batch):
         for act in mk()._actions:
             assert act.help, (mk.__name__, act.dest)
@@ -371,6 +368,6 @@ def test_make_screenshot(tmp_path):
 def test_version_flag():
     import subprocess
     for flag in ("--version", "-V"):
-        r = subprocess.run([sys.executable, os.path.join(ROOT, "yaru-folder-icon.py"), flag],
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "folder-symbols"), flag],
                            capture_output=True, text=True, check=True)
-        assert re.fullmatch(r"yaru-folder-icon\.py \d+\.\d+\.\d+\n", r.stdout), r.stdout
+        assert re.fullmatch(r"folder-symbols \d+\.\d+\.\d+\n", r.stdout), r.stdout

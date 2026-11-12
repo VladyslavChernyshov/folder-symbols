@@ -5,16 +5,15 @@ emboss colours, front-panel centre), measured from the PNG folders of every Yaru
 Usage: build_themes_json.py [--icons-root /usr/share/icons] [--out assets/themes.json]
 Run it again when a new Yaru release adds or changes a variant (the tests tell you when).
 """
-import argparse, importlib.util, json, os, sys
+import argparse, json, os, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def load_script():
-    spec = importlib.util.spec_from_file_location("yfi", os.path.join(ROOT, "yaru-folder-icon.py"))
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
+    sys.path.insert(0, ROOT)
+    from folder_symbols import yaru
+    return yaru
 
 
 def main():

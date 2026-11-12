@@ -9,25 +9,15 @@ import numpy as np
 from PIL import Image
 
 
-_YFI = None
-
-
-def _yfi():
-    global _YFI
-    if _YFI is None:
-        import importlib.util
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "yaru-folder-icon.py")
-        spec = importlib.util.spec_from_file_location("yfi", path)
-        _YFI = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(_YFI)
-    return _YFI
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from folder_symbols.engine import panel_bbox
 
 
 def measure(im):
     """im: RGBA uint8 array. Returns (dx, dy, ink_w, ink_h) in px; dx/dy = symbol bbox centre
     minus front-panel centre. Returns None if no symbol is found."""
     n = im.shape[0]
-    x0, y0, x1, y1 = _yfi().panel_bbox(im)
+    x0, y0, x1, y1 = panel_bbox(im)
     pcx, pcy = (x0 + x1) / 2, (y0 + y1) / 2
     im = im.astype(int)
     vals, cnt = np.unique(im[im[:, :, 3] == 255][:, :3], axis=0, return_counts=True)

@@ -35,10 +35,10 @@ details before redistributing a specific icon.
 
 ## What is original
 
-The script `yaru-folder-icon.py`, the tools in `tools/`, the tests and the workflow files are
-original code under the **MIT** licence (see `LICENSE`). The script does not contain Yaru code; it
-reads icons installed on the user's system (or from Yaru's source tree), the two templates and
-`themes.json` in `assets/`.
+The script `folder-symbols` and its package `folder_symbols/`, the tools in `tools/`, the tests and
+the workflow files are original code under the **MIT** licence (see `LICENSE`). The script does not
+contain Yaru code; it reads icons installed on the user's system (or from Yaru's source tree), the
+two templates and `themes.json` in `assets/`.
 
 `tools/extract_template.py` only reads a Yaru source sheet that the user supplies and writes a
 template from it; it does not include any Yaru artwork itself.

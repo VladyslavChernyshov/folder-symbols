@@ -13,7 +13,7 @@ import argparse, hashlib, subprocess, sys, tempfile, zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = ROOT / "yaru-folder-icon.py"
+SCRIPT = ROOT / "folder-symbols"
 
 README = """Yaru folder icons with symbols
 ==============================

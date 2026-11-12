@@ -10,7 +10,7 @@ installed Yaru theme: the data of all 26 variants ships with the script.
 
 ![Nautilus with the light and dark theme side by side](docs/screenshot.png)
 
-Run `./yaru-folder-icon.py` without arguments (or with `--help`) for the full description of
+Run `./folder-symbols` without arguments (or with `--help`) for the full description of
 every command and option.
 
 ## Quick start
@@ -20,13 +20,13 @@ sudo apt install python3-pil python3-numpy python3-scipy librsvg2-bin
 git clone https://github.com/VladyslavChernyshov/folder-symbols && cd folder-symbols
 
 # put a "community" symbol on ~/Music using your current icon theme
-./yaru-folder-icon.py apply ~/Music community
+./folder-symbols apply ~/Music community
 
 # see all available symbol names
 ls /usr/share/icons/Yaru/scalable/*/ | grep -- -symbolic | sed 's/-symbolic.svg//' | less
 
 # undo
-./yaru-folder-icon.py reset ~/Music
+./folder-symbols reset ~/Music
 ```
 
 `apply` detects the active icon theme (`gsettings get org.gnome.desktop.interface icon-theme`),
@@ -47,8 +47,8 @@ Options: `--theme Yaru-purple-dark`, `--format png` (then `--size 256`), `--scal
 ```bash
 # one scalable SVG (the extension of the output file decides the format);
 # the theme is a built-in variant name, or the path of an installed theme
-./yaru-folder-icon.py Yaru-dark /usr/share/icons/Yaru/scalable/actions/share-symbolic.svg share.svg
-./yaru-folder-icon.py /usr/share/icons/Yaru-dark /usr/share/icons/Yaru/scalable/actions/share-symbolic.svg share.svg
+./folder-symbols Yaru-dark /usr/share/icons/Yaru/scalable/actions/share-symbolic.svg share.svg
+./folder-symbols /usr/share/icons/Yaru-dark /usr/share/icons/Yaru/scalable/actions/share-symbolic.svg share.svg
 
 # a Nautilus icon straight from the SVG
 gio set ~/Music metadata::custom-icon file://$PWD/share.svg
@@ -101,13 +101,13 @@ Generate them yourself:
 
 ```bash
 # every symbol x every installed Yaru theme, SVG plus 512 px PNG
-./yaru-folder-icon.py batch --out dist --themes all --sizes svg,512
+./folder-symbols batch --out dist --themes all --sizes svg,512
 
 # only some themes / symbols; all PNG sizes Yaru ships (24 px and up)
-./yaru-folder-icon.py batch --out dist --themes Yaru,Yaru-dark --only '^(share|folder)' --sizes svg,all
+./folder-symbols batch --out dist --themes Yaru,Yaru-dark --only '^(share|folder)' --sizes svg,all
 
 # PNG output, or measuring from Yaru's source tree instead of the built-in table
-./yaru-folder-icon.py batch --icons-root ~/yaru/src/icons --out dist
+./folder-symbols batch --icons-root ~/yaru/src/icons --out dist
 ```
 
 `--sizes` takes `svg`, `512`, `256`, Yaru size directories (`24x24`, `48x48@2x`, ...) or `all`
@@ -137,11 +137,11 @@ a minute on a desktop PC.
 * **`overrides.json`**: per-symbol `scale`, `dx`, `dy`, `align` for exceptions (for example very
   wide symbols that would otherwise look small). The file sits next to the script and applies to
   PNG and SVG alike. Try a change on one folder first:
-  `./yaru-folder-icon.py apply DIR name --scale 1.3 --dry-run`.
+  `./folder-symbols apply DIR name --scale 1.3 --dry-run`.
 
 ## Licence
 
-* **Script** (`yaru-folder-icon.py`, tools, tests): MIT, see `LICENSE`.
+* **Script** (`folder-symbols`, the `folder_symbols/` package, tools, tests): MIT, see `LICENSE`.
 * **Folder templates in `assets/`** and **generated icons**: derivatives of Yaru's artwork, so
   they are licensed **CC BY-SA 4.0**; see `NOTICE.md` for attribution.
 

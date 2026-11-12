@@ -3,7 +3,7 @@
 
 Usage: extract_template.py PATH/TO/src/icons/src/fullcolor/accented-full/places/folders.svg OUT.svg
 The Yaru artwork is CC BY-SA 4.0 (see NOTICE.md). Colours are left as Yaru's dummy colours
-(#00ff03 accent, #008502 dark overlay); yaru-folder-icon.py replaces them per theme variant.
+(#00ff03 accent, #008502 dark overlay); folder_symbols/yaru.py replaces them per theme variant.
 """
 import re, sys
 from lxml import etree
@@ -71,14 +71,14 @@ def main(src, out):
     defs = etree.SubElement(new, "{%s}defs" % SVG)
     for i in sorted(need):
         defs.append(need[i])
-    marker = etree.SubElement(defs, "{%s}g" % SVG); marker.set("id", "yfi-symbol-defs")
+    marker = etree.SubElement(defs, "{%s}g" % SVG); marker.set("id", "fs-symbol-defs")
     g = etree.SubElement(new, "{%s}g" % SVG); g.set("transform", "translate(%g,%g)" % (-REGION[0], -REGION[1]))
     g.set("id", "folder")
     g.append(shape)
     clean(new)
     etree.cleanup_namespaces(new)
     data = etree.tostring(new, pretty_print=True, xml_declaration=True, encoding="UTF-8").decode()
-    data = data.replace('<g id="yfi-symbol-defs"/>', "<!--SYMBOL-DEFS-->")
+    data = data.replace('<g id="fs-symbol-defs"/>', "<!--SYMBOL-DEFS-->")
     data = data.replace("</svg>", "<!--SYMBOL-LAYERS-->\n</svg>")
     open(out, "w", encoding="utf-8").write(data)
     print(f"{out}: {len(data) // 1024} KiB, {len(need)} defs, {len(shape.xpath('.//s:path', namespaces=NS))} paths")
