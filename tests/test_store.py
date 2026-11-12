@@ -394,3 +394,161 @@ def test_list_commands_are_quoted_and_give_back_the_same_recipes(isolated_home, 
         sym = os.path.expanduser(a.symbol)
         assert recipes[d] == Recipe(sym, a.accent, a.scale, a.align), line
         assert d == str(isolated_home) or not os.path.exists(d)      # nothing was created
+
+
+# ------------------------------------------------------------- prune
+def recorded(*folders):
+    for d in folders:
+        store.record(d, Recipe("a", "red"))
+
+
+def test_prune_removes_missing_folders_and_keeps_the_others(isolated_home, gio, capsys):
+    keep, gone, afile = (str(isolated_home / n) for n in ("Keep", "Gone", "AFile"))
+    os.mkdir(keep)
+    open(afile, "w").close()                    # a file at the path: not a folder, so it counts as missing
+    recorded(keep, gone, afile, str(isolated_home), str(isolated_home / "AFile" / "below"))
+    cli.main(["prune"])
+    out = capsys.readouterr().out.splitlines()
+    assert out == ["removed   ~/AFile", "removed   ~/AFile/below", "removed   ~/Gone",
+                   "Removed 3 of 5 entries"]
+    assert [e.folder for e in store.entries()] == [str(isolated_home), keep]   # home is never removed
+    assert gio.calls == [] and os.path.exists(afile)
+    cli.main(["prune"])
+    assert capsys.readouterr().out == "Nothing to remove\n"
+
+
+def test_prune_writes_the_manifest_once(isolated_home, gio, monkeypatch):
+    recorded(*(str(isolated_home / n) for n in ("A", "B", "C")))
+    saves = []
+    real = store.Manifest.save
+    monkeypatch.setattr(store.Manifest, "save", lambda self: (saves.append(1), real(self)))
+    cli.main(["prune"])
+    assert len(saves) == 1 and store.entries() == []
+    cli.main(["prune"])                         # nothing to remove: nothing written
+    assert len(saves) == 1
+
+
+def test_prune_dry_run_changes_nothing(isolated_home, gio, capsys):
+    recorded(str(isolated_home / "Gone"))
+    before = open(store.manifest_path(), "rb").read()
+    os.unlink(os.path.join(store.data_dir(), "manifest.lock"))
+    cli.main(["prune", "--dry-run"])
+    assert capsys.readouterr().out.splitlines() == ["would remove  ~/Gone", "Would remove 1 of 1 entries"]
+    assert open(store.manifest_path(), "rb").read() == before
+    assert os.listdir(store.data_dir()) == ["manifest.json"]          # not even a lock file
+
+
+def test_prune_dry_run_without_a_manifest_creates_nothing(isolated_home, gio, capsys):
+    cli.main(["prune", "--dry-run"])
+    assert capsys.readouterr().out == "Nothing to remove\n"
+    assert not os.path.exists(store.data_dir())
+
+
+def test_prune_skips_folders_outside_home_unless_asked(isolated_home, gio, capsys, tmp_path):
+    ext_gone, ext_ok = str(tmp_path / "drive" / "Photos"), str(tmp_path / "here")
+    os.mkdir(ext_ok)
+    recorded(ext_gone, ext_ok, str(isolated_home / "Gone"))
+    cli.main(["prune", "--dry-run"])
+    out = capsys.readouterr().out
+    assert "Skipped 2 entries outside ~ (the drive may not be mounted); use --include-external" in out
+    assert ext_gone not in out and "Would remove 1 of 3 entries" in out
+    cli.main(["prune"])
+    assert {e.folder for e in store.entries()} == {ext_gone, ext_ok}
+    capsys.readouterr()
+    cli.main(["prune", "--include-external"])
+    out = capsys.readouterr().out
+    assert f"removed   {ext_gone}" in out and "Skipped" not in out and "Removed 1 of 2 entries" in out
+    assert [e.folder for e in store.entries()] == [ext_ok]
+
+
+def test_prune_keeps_entries_it_cannot_check(isolated_home, gio, capsys, monkeypatch):
+    locked, gone = str(isolated_home / "Locked"), str(isolated_home / "Gone")
+    recorded(locked, gone)
+    real = os.lstat
+
+    def lstat(p, *args, **kw):
+        if os.fspath(p) == locked:
+            raise PermissionError(13, "Permission denied", p)
+        return real(p, *args, **kw)
+    monkeypatch.setattr(os, "lstat", lstat)
+    cli.main(["prune"])
+    out = capsys.readouterr().out
+    assert "kept      ~/Locked: cannot check (Permission denied)" in out and "removed   ~/Gone" in out
+    assert [e.folder for e in store.entries()] == [locked]
+
+
+def test_prune_follows_symlinks_and_keeps_dangling_ones(isolated_home, gio, capsys, tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    good, dangling = isolated_home / "Good", isolated_home / "Dangling"
+    good.symlink_to(target)
+    dangling.symlink_to(tmp_path / "unmounted" / "x")
+    recorded(str(good), str(dangling))
+    cli.main(["prune"])
+    out = capsys.readouterr().out
+    assert "kept      ~/Dangling: cannot check" in out and "Nothing to remove" in out
+    assert len(store.entries()) == 2
+
+
+def test_prune_never_deletes_icon_files(isolated_home, gio, sym):
+    d = folder(isolated_home, "Moved")
+    cli.main(["apply", d, sym])
+    before = sorted(os.listdir(store.icons_dir()))
+    os.rmdir(d)
+    cli.main(["prune"])
+    assert store.entries() == [] and before and sorted(os.listdir(store.icons_dir())) == before
+    assert gio.calls == [d]                      # only the apply
+
+
+def test_prune_keeps_unknown_fields_and_unusable_entries(isolated_home, gio):
+    folder(isolated_home, "Music")
+    write_manifest({"schema_version": 1, "future": {"x": 1},
+                    "folders": [{"path": "Music", "note": "keep me",
+                                 "recipe": {"symbol": "a", "accent": "red", "later": True}},
+                                {"path": "Gone", "recipe": {"symbol": "a", "accent": "red"}},
+                                {"path": "NoRecipe"}]})
+    cli.main(["prune"])
+    data = raw_manifest()
+    assert data["future"] == {"x": 1}
+    assert data["folders"] == [{"path": "Music", "note": "keep me",
+                                "recipe": {"symbol": "a", "accent": "red", "later": True}},
+                               {"path": "NoRecipe"}]
+
+
+@pytest.mark.parametrize("args", [["prune"], ["prune", "--dry-run"]])
+def test_prune_with_a_damaged_or_newer_manifest_changes_nothing(isolated_home, gio, args):
+    write_manifest("{oops")
+    with pytest.raises(SystemExit, match="folder-symbols: .*damaged"):
+        cli.main(args)
+    assert open(store.manifest_path()).read() == "{oops"
+    newer = json.dumps({"schema_version": store.SCHEMA_VERSION + 1,
+                        "folders": [{"path": "Gone", "recipe": {"symbol": "a", "accent": "red"}}]})
+    write_manifest(newer)
+    with pytest.raises(SystemExit, match="newer folder-symbols"):
+        cli.main(args)
+    assert open(store.manifest_path()).read() == newer
+
+
+def test_remove_many_drops_all_entries_of_each_folder(isolated_home):
+    a, b = str(isolated_home / "A"), str(isolated_home / "B")
+    write_manifest({"schema_version": 1, "folders": [{"path": "A", "recipe": {"symbol": "x", "accent": "red"}},
+                                                     {"path": "A"}, {"path": "B"}]})
+    assert store.remove_many([a + "/", str(isolated_home / "C")]) == [a]
+    assert raw_manifest()["folders"] == [{"path": "B"}]
+    assert store.remove_many([]) == []
+
+
+def test_prune_keeps_folders_below_a_dangling_symlinked_parent(isolated_home, gio, capsys, tmp_path):
+    mounted = tmp_path / "mounted"
+    mounted.mkdir()
+    (isolated_home / "Drive").symlink_to(tmp_path / "unmounted")          # the drive is not mounted
+    (isolated_home / "Disk").symlink_to(mounted)                           # mounted, but X is really gone
+    below_dangling = str(isolated_home / "Drive" / "Photos" / "2026")
+    below_valid, plain = str(isolated_home / "Disk" / "X"), str(isolated_home / "Gone")
+    recorded(below_dangling, below_valid, plain)
+    cli.main(["prune"])
+    out = capsys.readouterr().out
+    assert "kept      ~/Drive/Photos/2026: cannot check (a parent directory is a symlink to a missing " \
+           "target)" in out
+    assert "removed   ~/Disk/X" in out and "removed   ~/Gone" in out and "Removed 2 of 3 entries" in out
+    assert [e.folder for e in store.entries()] == [below_dangling]

@@ -1,6 +1,6 @@
 """Setting and removing a folder's custom icon in Nautilus (gio metadata::custom-icon), and keeping
 the manifest of those folders (store.py) up to date."""
-import hashlib, json, os, re, shlex, subprocess, sys
+import contextlib, hashlib, json, os, re, shlex, subprocess, sys
 
 from . import store, yaru
 from .store import Recipe
@@ -216,6 +216,30 @@ def reset_all(a):
     print(f"Reset {len(items) - failed} of {len(items)} folders" if items else "No folders in the manifest")
     if failed:
         sys.exit(1)
+
+
+# ---------------------------------------------------------------- prune
+def prune(a):
+    """Forget the manifest entries of folders that no longer exist, in one save. Only the manifest
+    changes: no gio, no icon files deleted (a folder moved in Nautilus may still point to one)."""
+    with contextlib.nullcontext(store.load()) if a.dry_run else store.editing() as m:
+        _warn(m)
+        m.check_writable()
+        total = len(m.entries())
+        stale, unknown, skipped = store.stale_entries(m, a.include_external)
+        if not a.dry_run:
+            m.remove_many(e.folder for e in stale)
+    for e in stale:
+        print(f"{'would remove' if a.dry_run else 'removed '}  {display_path(e.folder)}")
+    for e, err in unknown:
+        print(f"kept      {display_path(e.folder)}: cannot check ({err.strerror or err})")
+    if skipped:
+        print(f"Skipped {skipped} {'entry' if skipped == 1 else 'entries'} outside ~ (the drive may not be "
+              "mounted); use --include-external to check them too")
+    if not stale:
+        print("Nothing to remove")
+    else:
+        print(f"{'Would remove' if a.dry_run else 'Removed'} {len(stale)} of {total} entries")
 
 
 # ---------------------------------------------------------------- list

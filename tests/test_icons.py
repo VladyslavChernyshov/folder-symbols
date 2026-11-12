@@ -266,18 +266,18 @@ def test_no_arguments_prints_full_help():
     assert r.returncode == 0
     for word in ("apply", "reset", "batch", "--sizes", "--align", "--keep-opacity", "--skip-existing",
                  "--dry-run", "--overrides", "--only", "--jobs", "--theme", "--store", "list", "--all",
-                 "--accent", "--format"):
+                 "--accent", "--format", "prune", "--include-external"):
         assert word in r.stdout, word
     assert r.stdout == _run("--help").stdout
 
 
 def test_every_command_has_help_for_every_option():
-    for cmd in ("apply", "reset", "list", "batch"):
+    for cmd in ("apply", "reset", "list", "prune", "batch"):
         r = _run(cmd, "--help")
         assert r.returncode == 0 and "usage:" in r.stdout
     # every option of every command is documented (argparse prints a help text next to it)
     from folder_symbols import cli as m
-    for mk in (m.parser_compose, m.parser_apply, m.parser_reset, m.parser_list, m.parser_batch):
+    for mk in (m.parser_compose, m.parser_apply, m.parser_reset, m.parser_list, m.parser_prune, m.parser_batch):
         for act in mk()._actions:
             assert act.help, (mk.__name__, act.dest)
 

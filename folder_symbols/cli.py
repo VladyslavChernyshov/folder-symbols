@@ -2,7 +2,7 @@
 import argparse, os, sys
 
 from . import __version__
-from .apply import apply, list_folders, reset, reset_all
+from .apply import apply, list_folders, prune, reset, reset_all
 from .batch import batch
 from .store import ManifestError
 from .svg import make_svg
@@ -42,6 +42,7 @@ Commands:
   reset   FOLDER | --all     remove a custom icon set with 'apply' (--all: every folder in the manifest)
   list                       show the folders that got an icon with 'apply' (--format commands: as
                              'apply' commands, to set up the same icons on another computer)
+  prune   [--dry-run]        forget the manifest entries of folders that no longer exist
   batch   --out DIR          generate icons for many symbols x themes x sizes at once
   (none)  THEME_DIR SYMBOL.svg OUT.png|OUT.svg
                              compose a single icon file, no folder is touched
@@ -51,6 +52,7 @@ Run 'folder-symbols COMMAND --help' for one command only. Examples:
   folder-symbols apply ~/Work briefcase --accent sage
   folder-symbols reset ~/Music
   folder-symbols list --format commands > my-folders.sh
+  folder-symbols prune --dry-run
   folder-symbols /usr/share/icons/Yaru-dark /usr/share/icons/Yaru/scalable/actions/share-symbolic.svg share.svg
   folder-symbols batch --out dist --themes Yaru,Yaru-dark --sizes svg,512
 
@@ -180,6 +182,24 @@ def parser_list():
     return p
 
 
+def parser_prune():
+    p = argparse.ArgumentParser(
+        prog="folder-symbols prune", formatter_class=_FMT,
+        usage="folder-symbols prune [--dry-run] [--include-external]",
+        description="Remove the manifest entries of folders that no longer exist (the path is missing "
+                    "or is not a directory), in one go, and print each one. Only the manifest changes: "
+                    "no folder is touched and no icon file is deleted. A folder that cannot be checked "
+                    "(e.g. no permission, or a broken symlink) keeps its entry. Your home folder is "
+                    "never removed.")
+    p.add_argument("prune", help=argparse.SUPPRESS)
+    p.add_argument("--dry-run", action="store_true",
+                   help="print what would be removed, but do not change the manifest")
+    p.add_argument("--include-external", action="store_true",
+                   help="also check folders outside your home folder. By default they are skipped, "
+                        "because the drive they are on may simply not be mounted")
+    return p
+
+
 def parser_batch():
     p = argparse.ArgumentParser(
         prog="folder-symbols batch", formatter_class=_FMT,
@@ -224,13 +244,14 @@ def main(argv):
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(OVERVIEW)
         for name, mk in (("COMPOSE ONE FILE", parser_compose), ("apply", parser_apply),
-                         ("reset", parser_reset), ("list", parser_list), ("batch", parser_batch)):
+                         ("reset", parser_reset), ("list", parser_list), ("prune", parser_prune),
+                         ("batch", parser_batch)):
             print("=" * 78 + f"\n{name}\n" + "=" * 78)
             print(mk().format_help())
         return
     cmd = argv[0]
     try:
-        if cmd in ("reset", "apply", "list"):
+        if cmd in ("reset", "apply", "list", "prune"):
             _manifest_command(cmd, argv)
             return
     except ManifestError as e:
@@ -246,6 +267,8 @@ def _manifest_command(cmd, argv):
         apply(parser_apply().parse_args(argv))
     elif cmd == "list":
         list_folders(parser_list().parse_args(argv))
+    elif cmd == "prune":
+        prune(parser_prune().parse_args(argv))
     else:
         p = parser_reset()
         a = p.parse_args(argv)

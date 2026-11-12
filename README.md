@@ -66,6 +66,7 @@ not exist there just gives the normal `apply` error; folders are never created.
 | `reset FOLDER` | remove the custom icon again |
 | `reset --all` | remove the custom icon of every folder in the manifest |
 | `list` | show the recorded folders and their status; `--format commands` prints `apply` commands |
+| `prune` | forget the entries of folders that no longer exist, e.g. `prune --dry-run` to see them first; `--include-external` also checks folders outside `~` |
 | `batch --out DIR` | generate icons for many symbols, themes and sizes at once |
 | `THEME_DIR SYMBOL.svg OUT.png` or `OUT.svg` | write one icon file, touch nothing else |
 
@@ -160,7 +161,7 @@ a minute on a desktop PC.
 * A folder moved with `mv` in a terminal loses its icon, because GVfs is not told about the move.
 * `reset --all` keeps the entry of a folder that does not exist (it may be on a drive that is not
   mounted), reports it as failed and exits with status 1. Run `folder-symbols reset PATH` to forget
-  such an entry.
+  such an entry, or run `folder-symbols prune` to forget all such entries at once.
 * `reset` does not delete icon files from `~/.local/share/folder-symbols/icons/`. They are small, and
   a folder moved in Nautilus may still point to one.
 * `apply --theme NAME` with a name that is not a Yaru variant still sets the icon, but does not
@@ -214,6 +215,6 @@ front panel, that oversized and odd-canvas symbols are fitted, that overrides ar
 the SVG output matches the PNG output and cuts off content outside the `viewBox`, that
 the built-in table in `assets/themes.json` is complete, matches the installed themes and gives the
 same SVG as measuring the theme, `batch` works and `--help` documents every option. The manifest
-store (reading and writing, damaged or newer files, `apply`, `reset`, `reset --all`, `list`) is
+store (reading and writing, damaged or newer files, `apply`, `reset`, `reset --all`, `list`, `prune`) is
 tested without Yaru. GitHub Actions runs the same tests on every push (`.github/workflows/test.yml`)
 and publishes contact sheets as a build artifact.

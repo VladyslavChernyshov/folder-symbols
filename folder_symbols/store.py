@@ -8,7 +8,7 @@ manifest.json, schema 1:
                                             "scale": 1.0, "align": "bbox"}}, ...]}
 "path" is relative to $HOME for folders inside it ("." is $HOME itself), absolute for the others.
 The light/dark style is not stored: it follows the system theme whenever an icon is built."""
-import contextlib, dataclasses, fcntl, json, os, tempfile, urllib.parse
+import contextlib, dataclasses, errno, fcntl, json, os, stat, tempfile, urllib.parse
 
 SCHEMA_VERSION = 1
 # {version: function(data) -> data in schema version + 1}; the first one comes with schema 2.
@@ -151,6 +151,14 @@ class Manifest:
         self.changed |= len(self._raw) != n
         return len(self._raw) != n
 
+    def remove_many(self, folders):
+        """Drop every entry of each of these folders in one pass. Returns the folders that had one."""
+        wanted = {folder_path(f) for f in folders}
+        found = {_folder_of(r) for r in self._raw} & wanted
+        self._raw = [r for r in self._raw if _folder_of(r) not in found]
+        self.changed |= bool(found)
+        return sorted(found)
+
     def check_writable(self):
         if self.version > SCHEMA_VERSION:
             raise ManifestError(f"{self.path} was written by a newer folder-symbols (schema "
@@ -263,6 +271,13 @@ def remove(folder, path=None):
         return m.remove(folder)
 
 
+def remove_many(folders, path=None):
+    """Forget several folders in one locked read-modify-write (one save)."""
+    with editing(path) as m:
+        m.check_writable()
+        return m.remove_many(folders)
+
+
 def entries(path=None):
     return load(path).entries()
 
@@ -292,3 +307,53 @@ def statuses(get_icon, path=None, icons=None):
 def folders_with_icon(get_icon, path=None, icons=None):
     """Entries whose folder exists and still shows the icon from our store."""
     return [e for e, s in statuses(get_icon, path, icons) if s == "ok"]
+
+
+def is_external(folder):
+    """True for a folder outside $HOME (stored with an absolute path; its drive may not be mounted)."""
+    return os.path.isabs(folder_key(folder))
+
+
+def folder_state(folder):
+    """("present" | "missing" | "unknown", OSError or None). Only a sure answer is "missing": the path
+    does not exist, or is something other than a directory. A symlink is followed; a dangling one, or
+    any other error (e.g. no permission), is "unknown", as its target may be on an unmounted drive.
+    The same goes for a missing path below a dangling symlinked parent (~/Drive/X, ~/Drive -> /mnt/drive)."""
+    try:
+        st = os.lstat(folder)
+    except (FileNotFoundError, NotADirectoryError):
+        parent = os.path.dirname(folder_path(folder))
+        while True:
+            if os.path.islink(parent) and not os.path.exists(parent):
+                return "unknown", OSError(errno.ENOENT, "a parent directory is a symlink to a missing "
+                                                        "target", parent)
+            if parent == os.path.dirname(parent):
+                return "missing", None
+            parent = os.path.dirname(parent)
+    except OSError as e:
+        return "unknown", e
+    if stat.S_ISLNK(st.st_mode):
+        try:
+            st = os.stat(folder)
+        except OSError as e:
+            return "unknown", e
+    return ("present" if stat.S_ISDIR(st.st_mode) else "missing"), None
+
+
+def stale_entries(manifest, include_external=False):
+    """(stale, unknown, skipped) for the usable entries of a manifest: stale entries are of folders that
+    surely do not exist, unknown is [(Entry, OSError)] for folders that cannot be checked, skipped is the
+    number of entries outside $HOME left unchecked (unless include_external). $HOME itself is never stale."""
+    stale, unknown, skipped, home = [], [], 0, _home()
+    for e in manifest.entries():
+        if e.folder == home:
+            continue
+        if not include_external and is_external(e.folder):
+            skipped += 1
+            continue
+        state, err = folder_state(e.folder)
+        if state == "missing":
+            stale.append(e)
+        elif state == "unknown":
+            unknown.append((e, err))
+    return stale, unknown, skipped
