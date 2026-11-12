@@ -179,6 +179,7 @@ def test_svg_override_scale_applied(g, svg, theme_name):
     assert (a != b).any()
 
 
+@pytest.mark.skipif(not THEMES, reason="no Yaru themes installed")
 def test_svg_cli_extension(tmp_path, svg):
     import subprocess
     p = svg("sq", SQUARE, 'viewBox="0 0 16 16"')
@@ -268,6 +269,7 @@ def test_every_command_has_help_for_every_option():
             assert act.help, (mk.__name__, act.dest)
 
 
+@pytest.mark.skipif(not THEMES, reason="no Yaru themes installed")
 def test_apply_dry_run_svg_and_png(tmp_path, svg):
     p = svg("sq", SQUARE, 'viewBox="0 0 16 16"')
     th = THEMES[0]

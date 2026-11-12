@@ -29,6 +29,19 @@ def installed_themes():
 
 
 THEMES = installed_themes()
+ALLOW_NO_YARU = os.environ.get("ALLOW_NO_YARU") == "1"
+
+
+def pytest_sessionstart(session):
+    """Most tests need the real Yaru themes and symbols. Without them they would be skipped and the run
+    would still look green, so stop with an error unless skipping was asked for (ALLOW_NO_YARU=1)."""
+    if ALLOW_NO_YARU or (THEMES and os.path.isdir(SYMBOLS_DIR)):
+        return
+    pytest.exit(
+        f"Yaru themes or symbols not found (themes in {ICONS_ROOT}: {len(THEMES)}, symbols dir: {SYMBOLS_DIR}).\n"
+        "Install them (sudo apt install yaru-theme-icon), point YARU_ICONS_ROOT / YARU_SYMBOLS_DIR at them,\n"
+        "or set ALLOW_NO_YARU=1 to run only the tests that do not need Yaru (the rest are skipped).",
+        returncode=2)
 
 
 def pytest_generate_tests(metafunc):
