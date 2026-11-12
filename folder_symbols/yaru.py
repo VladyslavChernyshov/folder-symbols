@@ -1,7 +1,7 @@
 """Everything specific to Yaru: its icon sizes and folder geometry, colour calibration from the
 theme's own PNGs, the SVG folder templates, the built-in table assets/themes.json and finding
 installed theme variants."""
-import functools, json, os, re, sys
+import functools, json, os, re, subprocess, sys
 import numpy as np
 from PIL import Image
 from scipy import ndimage as ndi
@@ -157,6 +157,43 @@ def builtin_themes():
             return json.load(f)["themes"]
     except (OSError, KeyError, ValueError):
         return {}
+
+
+def _split_variant(name):
+    """'Yaru-purple-dark' -> ('purple', True), 'Yaru' -> ('orange', False); None for other names."""
+    base, dark = (name[:-len("-dark")], True) if name.endswith("-dark") else (name, False)
+    if base == "Yaru":
+        return "orange", dark
+    if base.startswith("Yaru-") and base[len("Yaru-"):] not in ("", "orange"):
+        return base[len("Yaru-"):], dark
+    return None
+
+
+@functools.lru_cache(maxsize=None)
+def accents():
+    """Accent names of the built-in variants: 'orange' is plain Yaru, the others are the variant names
+    without 'Yaru-' and '-dark' (bark, blue, ..., mate, ...)."""
+    return tuple(sorted({v[0] for v in map(_split_variant, builtin_themes()) if v}))
+
+
+def parse_variant(name):
+    """(accent, dark) of a Yaru variant name such as 'Yaru-sage-dark', or None if it is not one."""
+    v = _split_variant(name or "")
+    return v if v and v[0] in accents() else None
+
+
+def variant_name(accent, dark):
+    """Inverse of parse_variant: ('purple', True) -> 'Yaru-purple-dark', ('orange', False) -> 'Yaru'."""
+    if accent not in accents():
+        raise ValueError(f"unknown accent {accent!r}; use one of {', '.join(accents())}")
+    return "Yaru" + ("" if accent == "orange" else f"-{accent}") + ("-dark" if dark else "")
+
+
+def current_icon_theme():
+    """The GNOME icon theme in use now (on Ubuntu it names the Yaru accent and the light/dark style)."""
+    out = subprocess.run(["gsettings", "get", "org.gnome.desktop.interface", "icon-theme"],
+                         capture_output=True, text=True, check=True).stdout
+    return out.strip().strip("'")
 
 
 def theme_ref_kind(ref):

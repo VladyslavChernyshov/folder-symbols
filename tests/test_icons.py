@@ -45,6 +45,21 @@ def test_overrides_shipped_file_is_valid(g):
 
 
 @pytest.mark.skipif(not os.path.isdir(SYMBOLS_DIR), reason="no Yaru symbols")
+@pytest.mark.skipif(not os.path.isdir(SYMBOLS_DIR), reason="Yaru symbols not installed")
+def test_symbol_names_are_unique_except_known_clashes():
+    """The manifest stores symbol names without their category, so a name must mean one picture.
+    Names that occur twice for the same file (symlinks) are fine; 'resources' is the one known clash
+    (generic-symbols/ vs status/, the latter is power-profile-balanced), and find_symbols always picks
+    generic-symbols. If this fails, Yaru added a clash: the recipe may need the category after all."""
+    pictures = {}
+    for dp, _, fs in os.walk(SYMBOLS_DIR):
+        for f in fs:
+            if f.endswith("-symbolic.svg"):
+                pictures.setdefault(f[:-len("-symbolic.svg")], set()).add(os.path.realpath(os.path.join(dp, f)))
+    assert {n for n, ps in pictures.items() if len(ps) > 1} <= {"resources"}
+
+
+@pytest.mark.skipif(not THEMES or not os.path.isdir(SYMBOLS_DIR), reason="no Yaru theme/symbols")
 def test_overrides_refer_to_existing_symbols(g):
     names = g.find_symbols(SYMBOLS_DIR, None)
     for name in g.load_overrides(os.path.join(ROOT, "overrides.json")):
@@ -250,18 +265,19 @@ def test_no_arguments_prints_full_help():
     r = _run()
     assert r.returncode == 0
     for word in ("apply", "reset", "batch", "--sizes", "--align", "--keep-opacity", "--skip-existing",
-                 "--dry-run", "--overrides", "--only", "--jobs", "--theme", "--store"):
+                 "--dry-run", "--overrides", "--only", "--jobs", "--theme", "--store", "list", "--all",
+                 "--accent", "--format"):
         assert word in r.stdout, word
     assert r.stdout == _run("--help").stdout
 
 
 def test_every_command_has_help_for_every_option():
-    for cmd in ("apply", "reset", "batch"):
+    for cmd in ("apply", "reset", "list", "batch"):
         r = _run(cmd, "--help")
         assert r.returncode == 0 and "usage:" in r.stdout
     # every option of every command is documented (argparse prints a help text next to it)
     from folder_symbols import cli as m
-    for mk in (m.parser_compose, m.parser_apply, m.parser_reset, m.parser_batch):
+    for mk in (m.parser_compose, m.parser_apply, m.parser_reset, m.parser_list, m.parser_batch):
         for act in mk()._actions:
             assert act.help, (mk.__name__, act.dest)
 

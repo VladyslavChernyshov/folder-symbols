@@ -2,11 +2,12 @@
 import argparse, os, sys
 
 from . import __version__
-from .apply import apply, reset
+from .apply import apply, list_folders, reset, reset_all
 from .batch import batch
+from .store import ManifestError
 from .svg import make_svg
-from .symbols import load_overrides
-from .yaru import Theme, builtin_themes, compose, render_symbol, theme_ref_kind
+from .symbols import YARU_SYMBOLS, load_overrides
+from .yaru import Theme, accents, builtin_themes, compose, render_symbol, theme_ref_kind
 
 
 def one(a):
@@ -38,14 +39,18 @@ hard-coded: they are measured from the theme's own folder.png, so every variant 
 
 Commands:
   apply   FOLDER SYMBOL      build a scalable (SVG) icon for one folder and set it in Nautilus (Files)
-  reset   FOLDER             remove a custom icon set with 'apply'
+  reset   FOLDER | --all     remove a custom icon set with 'apply' (--all: every folder in the manifest)
+  list                       show the folders that got an icon with 'apply' (--format commands: as
+                             'apply' commands, to set up the same icons on another computer)
   batch   --out DIR          generate icons for many symbols x themes x sizes at once
   (none)  THEME_DIR SYMBOL.svg OUT.png|OUT.svg
                              compose a single icon file, no folder is touched
 
 Run 'folder-symbols COMMAND --help' for one command only. Examples:
   folder-symbols apply ~/Music community
+  folder-symbols apply ~/Work briefcase --accent sage
   folder-symbols reset ~/Music
+  folder-symbols list --format commands > my-folders.sh
   folder-symbols /usr/share/icons/Yaru-dark /usr/share/icons/Yaru/scalable/actions/share-symbolic.svg share.svg
   folder-symbols batch --out dist --themes Yaru,Yaru-dark --sizes svg,512
 
@@ -105,24 +110,32 @@ def parser_apply():
         description="Build an icon for the given folder (scalable SVG by default, stored under --store) and set it as "
                     "the folder's custom icon in Nautilus via 'gio set ... metadata::custom-icon'. "
                     "The icon uses the colours of the GNOME icon theme that is active now, so "
-                    "re-run it after changing theme or accent colour.")
+                    "re-run it after changing theme or accent colour. The folder and its recipe (symbol, "
+                    "accent, scale, align) are recorded in the manifest, "
+                    "~/.local/share/folder-symbols/manifest.json, for 'list' and 'reset --all'.")
     p.add_argument("apply", help=argparse.SUPPRESS)
     p.add_argument("folder", help="the folder that gets the icon, e.g. ~/Music")
     p.add_argument("symbol", help="symbol name, e.g. community (the file name without "
                    "'-symbolic.svg', searched in --symbols-dir), or a path to a *-symbolic.svg")
-    p.add_argument("--theme", default=None, metavar="NAME",
-                   help="Yaru theme variant to take colours from, e.g. Yaru-purple-dark. "
-                        "Default: the current GNOME icon theme (gsettings)")
+    which = p.add_mutually_exclusive_group()
+    which.add_argument("--theme", default=None, metavar="NAME",
+                       help="Yaru theme variant to take colours from, e.g. Yaru-purple-dark. "
+                            "Default: the current GNOME icon theme (gsettings)")
+    which.add_argument("--accent", default=None, choices=accents(), metavar="NAME",
+                       help="accent colour of the folder, with the light or dark style of the current icon "
+                            f"theme: {', '.join(accents())} (orange is plain Yaru). "
+                            "Default: the accent of the current icon theme")
     p.add_argument("--icons-root", default=None, metavar="DIR",
                    help="measure the theme from the PNG folders in this directory instead of using "
                         "the built-in data (SVG), and look here first for PNG themes (then "
                         "~/.local/share/icons and /usr/share/icons). Default: built-in data for "
                         "SVG, installed themes for PNG")
-    p.add_argument("--symbols-dir", default="/usr/share/icons/Yaru/scalable", metavar="DIR",
-                   help="where symbol names are looked up. Default: /usr/share/icons/Yaru/scalable")
-    p.add_argument("--store", default="~/.local/share/folder-icons", metavar="DIR",
+    p.add_argument("--symbols-dir", default=YARU_SYMBOLS, metavar="DIR",
+                   help=f"where symbol names are looked up. Default: {YARU_SYMBOLS}")
+    p.add_argument("--store", default=None, metavar="DIR",
                    help="where the generated icon file is kept; Nautilus reads it from there, so do not "
-                        "delete it. Default: ~/.local/share/folder-icons")
+                        "delete it. 'list' shows icons outside the default directory as 'other icon'. "
+                        "Default: ~/.local/share/folder-symbols/icons ($XDG_DATA_HOME/folder-symbols/icons)")
     p.add_argument("--format", choices=("svg", "png"), default="svg",
                    help="svg: one scalable file, sharp at any size (default); png: a raster icon, "
                         "see --size")
@@ -131,18 +144,39 @@ def parser_apply():
     _common(p)
     p.add_argument("--no-overrides", action="store_true", help="ignore overrides.json completely")
     p.add_argument("--dry-run", action="store_true",
-                   help="build the icon file and print the gio command, but do not run it")
+                   help="build the icon file and print the gio command, but do not run it and do not "
+                        "change the manifest")
     return p
 
 
 def parser_reset():
     p = argparse.ArgumentParser(
         prog="folder-symbols reset", formatter_class=_FMT,
-        usage="folder-symbols reset FOLDER",
+        usage="folder-symbols reset FOLDER | --all",
         description="Remove the custom icon of a folder (gio set -t unset ... metadata::custom-icon), "
-                    "so Nautilus shows the theme's normal folder again. The generated file is not deleted.")
+                    "so Nautilus shows the theme's normal folder again, and remove the folder from the "
+                    "manifest. A folder that no longer exists is only removed from the manifest. "
+                    "The generated file is not deleted.")
     p.add_argument("reset", help=argparse.SUPPRESS)
-    p.add_argument("folder", help="the folder to restore, e.g. ~/Music")
+    p.add_argument("folder", nargs="?", help="the folder to restore, e.g. ~/Music")
+    p.add_argument("--all", action="store_true",
+                   help="reset every folder in the manifest. Each folder is reported as ok or FAILED; "
+                        "a failure does not stop the others, its entry is kept and the exit status is 1")
+    return p
+
+
+def parser_list():
+    p = argparse.ArgumentParser(
+        prog="folder-symbols list", formatter_class=_FMT,
+        usage="folder-symbols list [--format table|commands]",
+        description="Show the folders recorded in the manifest by 'apply', with their recipe and a "
+                    "status: ok (the icon from the store is set), missing (no such folder), other icon "
+                    "(another custom icon is set), no icon (it was removed outside folder-symbols).")
+    p.add_argument("list", help=argparse.SUPPRESS)
+    p.add_argument("--format", choices=("table", "commands"), default="table",
+                   help="table: one line per folder with its status (default); commands: one "
+                        "'folder-symbols apply ...' command per folder, paths written from ~, to run on "
+                        "another computer. Folders are not checked, and missing ones are never created")
     return p
 
 
@@ -190,17 +224,32 @@ def main(argv):
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(OVERVIEW)
         for name, mk in (("COMPOSE ONE FILE", parser_compose), ("apply", parser_apply),
-                         ("reset", parser_reset), ("batch", parser_batch)):
+                         ("reset", parser_reset), ("list", parser_list), ("batch", parser_batch)):
             print("=" * 78 + f"\n{name}\n" + "=" * 78)
             print(mk().format_help())
         return
     cmd = argv[0]
-    if cmd == "reset":
-        reset(parser_reset().parse_args(argv))
-    elif cmd == "apply":
-        apply(parser_apply().parse_args(argv))
-    elif cmd == "batch":
+    try:
+        if cmd in ("reset", "apply", "list"):
+            _manifest_command(cmd, argv)
+            return
+    except ManifestError as e:
+        sys.exit(f"folder-symbols: {e}")
+    if cmd == "batch":
         batch(parser_batch().parse_args(argv))
     else:
         one(parser_compose().parse_args(argv))
+
+
+def _manifest_command(cmd, argv):
+    if cmd == "apply":
+        apply(parser_apply().parse_args(argv))
+    elif cmd == "list":
+        list_folders(parser_list().parse_args(argv))
+    else:
+        p = parser_reset()
+        a = p.parse_args(argv)
+        if a.all == bool(a.folder):
+            p.error("give either FOLDER or --all")
+        (reset_all if a.all else reset)(a)
 

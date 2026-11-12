@@ -6,7 +6,8 @@ Modules:
   symbols  finding *-symbolic.svg files and the per-symbol overrides.json
   svg      the scalable (SVG) output
   batch    many symbols x themes x sizes in parallel
-  apply    setting / removing a folder's custom icon with gio
+  apply    setting / removing a folder's custom icon with gio, list, reset --all
+  store    the local store: manifest.json (one recipe per folder) and the generated icons
   cli      argument parsers and main()
 """
 __version__ = "0.1.0"   # the one place the version lives; tag releases as v<__version__>

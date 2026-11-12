@@ -19,6 +19,22 @@ def _load():
     return types.SimpleNamespace(**ns)
 
 
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path_factory, monkeypatch):
+    """Every test runs with a temporary $HOME and $XDG_DATA_HOME, and with `gio` and `gsettings` on PATH
+    replaced by stubs that fail, so no test can touch the real home directory or a real folder's icon,
+    even through a subprocess. Tests that need gio fake the wrappers in folder_symbols.apply instead."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+    stubs = tmp_path_factory.mktemp("stubs")
+    for tool in ("gio", "gsettings"):
+        (stubs / tool).write_text(f"#!/bin/sh\necho '{tool} is disabled in tests' >&2\nexit 99\n")
+        (stubs / tool).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}")
+    return home
+
+
 @pytest.fixture(scope="session")
 def g():
     return _load()

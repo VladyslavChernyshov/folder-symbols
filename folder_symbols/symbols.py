@@ -1,6 +1,7 @@
 """Finding symbolic icons (*-symbolic.svg) and the per-symbol tweaks in overrides.json."""
 import json, os, re
 
+YARU_SYMBOLS = "/usr/share/icons/Yaru/scalable"   # where symbol names are looked up by default
 OVERRIDES_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "overrides.json")
 
 
