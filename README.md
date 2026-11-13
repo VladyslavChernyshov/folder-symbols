@@ -206,6 +206,10 @@ python3 tools/build_themes_json.py --icons-root ~/yaru/src/icons    # refresh as
 python3 tools/make_screenshot.py                                    # redraw docs/screenshot.png (fake Nautilus, light | dark)
 ```
 
+Extra packages for the GUI (not required for the CLI or tests):
+- Ubuntu: `sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1`
+- openSUSE: `sudo zypper install python313-gobject typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1`
+
 The tests never touch your real home directory and never call `gio`: they run with a temporary
 `HOME` and `XDG_DATA_HOME` and stand-ins for `gio` and `gsettings`.
 

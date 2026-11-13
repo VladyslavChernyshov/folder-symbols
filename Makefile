@@ -23,7 +23,8 @@ K          ?=
         sample sample-svg centering sheets \
         release \
         screenshot social-preview themes-json \
-        cli-help clean
+        cli-help clean \
+        app
 
 help: ## Show this list
 	@awk 'BEGIN {FS = ":.*## "} \
@@ -89,6 +90,10 @@ social-preview: ## Redraw docs/social-preview.png (1280x640 for GitHub, 8x3 grid
 
 themes-json: ## Rebuild assets/themes.json after a Yaru update (then run `make test`)
 	$(PYTHON) tools/build_themes_json.py --icons-root $(ICONS_ROOT) --out assets/themes.json
+
+##@ GUI
+app: ## Run the GUI app; PATHS= accepts space-separated folder paths, e.g. make app PATHS="$$HOME/Music"
+	./folder-symbols-gui $(PATHS)
 
 ##@ Misc
 cli-help: ## Check that running the script without arguments prints the help

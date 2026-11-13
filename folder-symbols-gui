@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""Folder Symbols GUI – GTK4/libadwaita application for setting custom folder icons.
+
+Thin wrapper around folder_symbols.gui. Requires PyGObject and GTK4/libadwaita bindings:
+  Ubuntu:   python3-gi  gir1.2-gtk-4.0  gir1.2-adw-1
+  openSUSE: python313-gobject  typelib-1_0-Gtk-4_0  typelib-1_0-Adw-1
+"""
+import os, sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+try:
+    from folder_symbols.gui.application import FolderSymbolsApplication
+except ImportError:
+    sys.stderr.write(
+        "folder-symbols-gui requires PyGObject and GTK4/libadwaita bindings.\n"
+        "  Ubuntu:   sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1\n"
+        "  openSUSE: sudo zypper install python313-gobject"
+        " typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1\n"
+    )
+    sys.exit(1)
+
+if __name__ == "__main__":
+    sys.exit(FolderSymbolsApplication().run(sys.argv))
