@@ -5,6 +5,11 @@ YARU_SYMBOLS = "/usr/share/icons/Yaru/scalable"   # where symbol names are looke
 OVERRIDES_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "overrides.json")
 
 
+def default_symbols_dir():
+    """The symbols directory for the GUI: $YARU_SYMBOLS_DIR if set, else YARU_SYMBOLS."""
+    return os.environ.get("YARU_SYMBOLS_DIR") or YARU_SYMBOLS
+
+
 def load_overrides(path=None):
     """Per-symbol tweaks: {"name": {"scale": 1.6, "dx": 0.0, "dy": 0.0}} (dx/dy: fraction of icon)."""
     path = path or OVERRIDES_FILE
