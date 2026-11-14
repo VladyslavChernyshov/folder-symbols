@@ -1,5 +1,6 @@
-"""AccentPicker: the "Accent" heading, a grid of colour swatches (one radio group) and the "system accent"
-legend, under the folder preview."""
+"""AccentPicker: the "Accent" heading, a grid of colour swatches (one radio group) and the "Follow system
+accent" row (the mini system swatch that marks the system accent, the label and a switch), under the folder
+preview."""
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -14,7 +15,10 @@ ROW_GAP = 8                              # mockup .sw gap
 RING_WIDTH = 3                           # selected swatch (mockup .sw i.on outline)
 RING_OFFSET = 2
 HEADING_MARGINS = (16, 6)                # top, bottom (mockup .lbl)
-LEGEND_MARGIN_TOP = 10                   # mockup .note
+LEGEND_MARGIN_TOP = 10                   # mockup .note (now the "Follow system accent" row)
+FOLLOW_LABEL = "Follow system accent"
+FOLLOW_TOOLTIP = "Keep the folder in the system accent, instead of the colour chosen here"
+NO_FOLLOW_TOOLTIP = "The system icon theme is not Yaru, so there is no system accent to follow"
 DOT_RADIUS = 3                           # the system dot: 8 px across with its 1 px ring (mockup .sw i u)
 LEGEND_SIZE = 12                         # the legend marker: a miniature system swatch
 LEGEND_DOT_RADIUS = 2                    # its inner dot, 4 px across
@@ -70,23 +74,44 @@ def _load_css():
 
 
 class AccentPicker(Gtk.Box):
-    """The property accent holds the selected accent name (as the manifest records it)."""
+    """The property accent holds the selected accent name (as the manifest records it). The signals are
+    emitted for the user's own actions only, never for set_choices() or set_follow(): picked(accent) for a
+    click (or Space, or an arrow key) on any swatch, also the one already selected; follow-toggled(on) for
+    the switch or a click on its row."""
 
     accent = GObject.Property(type=str, default="")
+    __gsignals__ = {
+        "picked": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        "follow-toggled": (GObject.SignalFlags.RUN_FIRST, None, (bool,)),
+    }
 
     def __init__(self, **kwargs):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, css_classes=["accent-picker"], **kwargs)
         _load_css()
         self._buttons = {}
         self._choices = None
+        self._programmatic = False
+        self._pressed_selected = None        # the swatch that was already selected when it was pressed
         self.append(Gtk.Label(label="Accent", xalign=0, css_classes=["caption-heading", "dim-label"],
                               margin_top=HEADING_MARGINS[0], margin_bottom=HEADING_MARGINS[1]))
         self._grid = Gtk.Grid(column_homogeneous=True, row_spacing=ROW_GAP)
         self.append(self._grid)
-        self._legend = Gtk.Box(spacing=6, margin_top=LEGEND_MARGIN_TOP, visible=False)
-        self._legend.append(Gtk.Box(css_classes=["accent-legend-dot"], valign=Gtk.Align.CENTER))
-        self._legend.append(Gtk.Label(label="system accent", css_classes=["caption", "dim-label"]))
-        self.append(self._legend)
+        # One row like a GNOME Settings row: the mini system swatch (the legend of the swatch dot), the
+        # label and the switch; a click anywhere on it toggles the switch, which is the only tab stop.
+        self._follow_row = Gtk.Box(spacing=6, margin_top=LEGEND_MARGIN_TOP)
+        self._marker = Gtk.Box(css_classes=["accent-legend-dot"], valign=Gtk.Align.CENTER, visible=False)
+        self._follow_row.append(self._marker)
+        self._follow_row.append(Gtk.Label(label=FOLLOW_LABEL, xalign=0, hexpand=True,
+                                          css_classes=["caption", "dim-label"]))
+        self._switch = Gtk.Switch(valign=Gtk.Align.CENTER)
+        self._switch.update_property([Gtk.AccessibleProperty.LABEL], [FOLLOW_LABEL])
+        self._switch.connect("notify::active", self._on_switch)
+        self._follow_row.append(self._switch)
+        row_click = Gtk.GestureClick()
+        row_click.connect("released", self._on_row_click)
+        self._follow_row.add_controller(row_click)
+        self.append(self._follow_row)
+        self.set_follow(False, False)
         style = Adw.StyleManager.get_default()
         style.connect("notify::dark", lambda *_: self._follow_style())
         self._follow_style()
@@ -100,6 +125,13 @@ class AccentPicker(Gtk.Box):
     def set_choices(self, selected, system):
         """Show the swatches for these accents (MATE only when selected or system is mate), mark the
         system accent (None: no mark, e.g. a non-Yaru theme) and select `selected`."""
+        self._programmatic = True
+        try:
+            self._set_choices(selected, system)
+        finally:
+            self._programmatic = False
+
+    def _set_choices(self, selected, system):
         choices = picker_accents(selected, system)
         if choices != self._choices:
             self._build(choices)
@@ -112,9 +144,36 @@ class AccentPicker(Gtk.Box):
             tip = swatch_tooltip(name, is_system)
             button.set_tooltip_text(tip)
             button.update_property([Gtk.AccessibleProperty.LABEL], [tip])
-        self._legend.set_visible(system in self._buttons)
+        self._marker.set_visible(system in self._buttons)
         if selected in self._buttons:
             self._buttons[selected].set_active(True)
+
+    def set_follow(self, active, available):
+        """Show the switch on or off; without a system accent (available False) it is insensitive and says
+        why in its tooltip."""
+        self._programmatic = True
+        try:
+            self._switch.set_active(active and available)
+        finally:
+            self._programmatic = False
+        self._follow_row.set_sensitive(available)
+        tip = FOLLOW_TOOLTIP if available else NO_FOLLOW_TOOLTIP
+        self._follow_row.set_tooltip_text(tip)
+        self._switch.update_property([Gtk.AccessibleProperty.DESCRIPTION], [tip])
+
+    def _on_switch(self, switch, _pspec):
+        if not self._programmatic:
+            self.emit("follow-toggled", switch.get_active())
+
+    def _on_row_click(self, gesture, _n, x, y):
+        """A click on the row but not on the switch (which handles its own) toggles the switch."""
+        hit = self._follow_row.pick(x, y, Gtk.PickFlags.DEFAULT)
+        while hit is not None and hit is not self._follow_row:
+            if hit is self._switch:
+                return
+            hit = hit.get_parent()
+        if self._switch.get_sensitive() and self._follow_row.get_sensitive():
+            self._switch.set_active(not self._switch.get_active())     # emits follow-toggled
 
     def _build(self, choices):
         while (child := self._grid.get_first_child()) is not None:
@@ -127,9 +186,30 @@ class AccentPicker(Gtk.Box):
             button.set_group(group)
             group = group or button
             button.connect("toggled", self._on_toggled, name)
+            # GTK does not toggle a radio that is already active, so a click or Space on the selected
+            # swatch is caught here: the press records whether it was selected, the release picks it.
+            click = Gtk.GestureClick(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+            click.connect("pressed", self._on_swatch_pressed, name)
+            click.connect("released", self._on_swatch_released, name)
+            button.add_controller(click)
+            button.connect("activate", lambda b, n=name: b.get_active() and self._picked(n))
             self._grid.attach(button, i % columns, i // columns, 1, 1)
             self._buttons[name] = button
 
     def _on_toggled(self, button, name):
-        if button.get_active() and self.accent != name:
-            self.accent = name
+        if button.get_active():
+            if self.accent != name:
+                self.accent = name
+            self._picked(name)
+
+    def _on_swatch_pressed(self, _gesture, _n, _x, _y, name):
+        self._pressed_selected = self._buttons[name].get_active() and name
+
+    def _on_swatch_released(self, _gesture, _n, _x, _y, name):
+        if self._pressed_selected == name:
+            self._picked(name)
+        self._pressed_selected = None
+
+    def _picked(self, name):
+        if not self._programmatic:
+            self.emit("picked", name)

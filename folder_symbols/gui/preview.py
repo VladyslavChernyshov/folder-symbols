@@ -6,8 +6,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, Gtk
 
-from folder_symbols import yaru
-from folder_symbols.accents import initial_accent, system_accent
+from folder_symbols.accents import initial_choice, panel_choice, pick, set_follow, system_accent, system_changed
 from folder_symbols.preview import PreviewError, variant_for
 from folder_symbols.gui.accents import AccentPicker
 
@@ -44,7 +43,9 @@ def _load_css():
 
 class PreviewPanel(Gtk.Box):
     """The Yaru folder with the selected symbol (or without one), built by session (a
-    preview.PreviewSession) in the accent chosen below it and the system's light/dark style."""
+    preview.PreviewSession) in the accent chosen below it and the system's light/dark style. The accent
+    state (follow the system or a pinned swatch) is an accents.AccentChoice; current_choice() tells what
+    would be applied."""
 
     def __init__(self, session, **kwargs):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, css_classes=["preview-panel"],
@@ -52,9 +53,8 @@ class PreviewPanel(Gtk.Box):
         _load_css()
         self._session = session
         self._symbol = None
-        self._accent = None
-        self._accent_is_default = True      # the accent is the system's default, not recorded or picked
-        self._setting_choices = False
+        self._choice = None
+        self._drawn_dark = Adw.StyleManager.get_default().get_dark()
         # hexpand centres the image along the box; vexpand would propagate and stretch the box downwards.
         self._image = Gtk.Image(pixel_size=PREVIEW_ICON_SIZE, hexpand=True,
                                 halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
@@ -62,7 +62,8 @@ class PreviewPanel(Gtk.Box):
         box.append(self._image)
         self.append(box)
         self._picker = AccentPicker()
-        self._picker.connect("notify::accent", self._on_picked)
+        self._picker.connect("picked", lambda _p, accent: self._update(pick(self._choice, accent)))
+        self._picker.connect("follow-toggled", lambda _p, on: self._update(set_follow(self._choice, on)))
         self.append(self._picker)
         self.set_initial_accent(None)
         # Follow the system style while the window is open: a new accent on Ubuntu is a new icon theme.
@@ -70,38 +71,25 @@ class PreviewPanel(Gtk.Box):
         Gtk.Settings.get_default().connect("notify::gtk-icon-theme-name", lambda *_: self._on_system_theme())
 
     def set_initial_accent(self, recorded):
-        """Select the folders' recorded accent (InitialState.accent), or the system's when there is none,
-        and mark the system accent in the picker."""
-        self._accent_is_default = recorded not in yaru.accents()
-        system = system_accent()
-        self._set_choices(initial_accent(recorded, system), system)
-
-    def _set_choices(self, selected, system):
-        self._setting_choices = True
-        try:
-            self._picker.set_choices(selected, system)
-        finally:
-            self._setting_choices = False
-        self.set_accent(self._picker.accent)
-
-    def _on_picked(self, picker, _pspec):
-        if not self._setting_choices:
-            self._accent_is_default = False
-            self.set_accent(picker.accent)
+        """Start from the folders' recorded accent (InitialState.accent): "system" or none follows the
+        system accent (switch on), a concrete accent is pinned (switch off, that swatch)."""
+        self._update(initial_choice(recorded, system_accent()))
 
     def _on_system_theme(self):
-        """The system accent changed: move the mark, and follow it unless an accent was recorded or picked."""
-        system = system_accent()
-        self._set_choices(initial_accent(None, system) if self._accent_is_default else self._picker.accent,
-                          system)
+        """The system accent changed: the mark moves, and a following choice moves with it."""
+        self._update(system_changed(self._choice, system_accent()))
+
+    def _update(self, choice):
+        """Show this AccentChoice in the picker (programmatically: no signal comes back) and redraw."""
+        self._choice = choice
+        self._picker.set_choices(choice.selected, choice.system)
+        self._picker.set_follow(choice.follow, choice.follow_available)
         self._show()
 
-    def set_accent(self, accent):
-        """accent: the accent to preview with, or None for the system's. The light/dark style always
-        follows the system."""
-        if accent != self._accent:
-            self._accent = accent
-            self._show()
+    def current_choice(self):
+        """An accents.PanelChoice: what Apply would pass to apply_folders (accent, system_accent), the
+        light/dark style the preview was last drawn in, and the selected symbol (None: nothing to apply)."""
+        return panel_choice(self._choice, self._drawn_dark, self._symbol)
 
     def set_symbol(self, symbol):
         """symbol: a gallery.Symbol, or None."""
@@ -111,8 +99,11 @@ class PreviewPanel(Gtk.Box):
     def _show(self):
         """The folder in the selected accent and the system's light/dark style, with the symbol when one
         is selected; the system's own folder icon if it cannot be built."""
+        if self._choice is None:
+            return
+        self._drawn_dark = dark = Adw.StyleManager.get_default().get_dark()
         try:
-            variant = variant_for(self._accent, Adw.StyleManager.get_default().get_dark())
+            variant = variant_for(self._choice.selected, dark)
             if self._symbol is not None:
                 path = self._session.build(self._symbol.path, variant)
             else:
