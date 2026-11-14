@@ -16,12 +16,16 @@ RING_OFFSET = 2
 HEADING_MARGINS = (16, 6)                # top, bottom (mockup .lbl)
 LEGEND_MARGIN_TOP = 10                   # mockup .note
 DOT_RADIUS = 3                           # the system dot: 8 px across with its 1 px ring (mockup .sw i u)
+LEGEND_SIZE = 12                         # the legend marker: a miniature system swatch
+LEGEND_DOT_RADIUS = 2                    # its inner dot, 4 px across
 
 # The swatch is the check button's radio node, so GTK's own radio group does the selection and keyboard
 # focus; the theme's bullet is not drawn. Only named theme colours for the marks: the selected ring is the
 # foreground colour, the focus ring is the theme's own (moved outside the swatch), and the system dot is
-# the accent foreground on a thin shade ring. The fills are the only literal colours, generated from the
-# folder colours in assets/themes.json (light, and under .dark the dark variant's).
+# the accent foreground on a thin shade ring. The legend marker is a miniature system swatch in the GNOME
+# accent (@accent_bg_color with an @accent_fg_color dot), so it may differ slightly from the swatch. The
+# fills are the only literal colours, generated from the folder colours in assets/themes.json (light, and
+# under .dark the dark variant's).
 _DOT = (f"radial-gradient(circle, @accent_fg_color {DOT_RADIUS}px, @shade_color {DOT_RADIUS}px "
         f"{DOT_RADIUS + 1}px, transparent {DOT_RADIUS + 1}px)")
 BASE_CSS = f"""
@@ -36,8 +40,10 @@ checkbutton.accent-swatch > radio:checked {{
 checkbutton.accent-swatch:focus:focus-visible {{ outline-offset: {RING_OFFSET}px; }}
 checkbutton.accent-swatch.system > radio {{ background-image: {_DOT}; }}
 .accent-legend-dot {{
-  min-width: {2 * DOT_RADIUS + 2}px; min-height: {2 * DOT_RADIUS + 2}px; border-radius: 50%;
-  background-image: {_DOT};
+  min-width: {LEGEND_SIZE}px; min-height: {LEGEND_SIZE}px; border-radius: 50%;
+  background-color: @accent_bg_color;
+  background-image: radial-gradient(circle, @accent_fg_color {LEGEND_DOT_RADIUS}px,
+                                    transparent {LEGEND_DOT_RADIUS}px);
 }}
 """
 _css_loaded = False
