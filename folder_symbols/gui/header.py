@@ -10,11 +10,6 @@ from folder_symbols.selection import panel_title, panel_tooltip
 
 ALL_CATEGORIES = "All categories"
 HEADER_GAP = 8                           # window buttons -> search -> category button (mockup .hbl gap)
-CATEGORY_MENU_WIDTH = 230                # mockup .pop width
-CATEGORY_LIST_MAX_HEIGHT = 300           # the scrolled part of the menu, below "All categories"
-# Margins around each category radio button, vertical and horizontal. The button is 28 px high by itself,
-# so 2 px makes 32 px rows, about the mockup's .pop .it (7 px padding around a 16-17 px line).
-CATEGORY_ROW_MARGIN = (2, 10)
 NO_CATEGORY_ICON = "view-list-symbolic"
 CLEAR_CATEGORY_ICONS = ["cross-small-symbolic", "window-close-symbolic"]   # first one the theme has
 
@@ -55,7 +50,7 @@ class GalleryHeader(Adw.Bin):
         self._button_icon = Gtk.Image()
         self._button = Adw.SplitButton(child=self._button_icon, action_name="gallery.show-all",
                                        dropdown_tooltip="Choose a category",
-                                       popover=self._category_menu(categories(symbols)))
+                                       menu_model=self._category_menu(categories(symbols)))
         if not symbols:
             self.search.set_sensitive(False)
             self._button.set_sensitive(False)
@@ -69,29 +64,26 @@ class GalleryHeader(Adw.Bin):
         self.set_child(header)
         self._update()
 
-    def _category_menu(self, names):
-        """A popover with "All categories", a separator and a scrolled list of the categories. Each row is
-        a radio button bound to gallery.category, so GTK marks the current category itself."""
-        def row(label, target):
-            return Gtk.CheckButton(label=label, action_name="gallery.category",
-                                   action_target=GLib.Variant.new_string(target),
-                                   margin_top=CATEGORY_ROW_MARGIN[0], margin_bottom=CATEGORY_ROW_MARGIN[0],
-                                   margin_start=CATEGORY_ROW_MARGIN[1], margin_end=CATEGORY_ROW_MARGIN[1])
-        listed = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        for name in names:
-            listed.append(row(name, name))
-        scroller = Gtk.ScrolledWindow(child=listed, hscrollbar_policy=Gtk.PolicyType.NEVER,
-                                      max_content_height=CATEGORY_LIST_MAX_HEIGHT,
-                                      propagate_natural_height=True)
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, width_request=CATEGORY_MENU_WIDTH)
-        content.append(row(ALL_CATEGORIES, ""))
-        content.append(Gtk.Separator())
-        content.append(scroller)
-        return Gtk.Popover(child=content)
+    @staticmethod
+    def _category_menu(names):
+        """A native menu, as in Nautilus' view menu: "All categories", then the categories in a second
+        section (the theme draws the separator between sections). Every item targets gallery.category, so
+        the theme draws them as radio items and marks the current one. The menu scrolls by itself when it
+        is taller than the space available, and closes when an item is chosen."""
+        def section(*items):
+            menu = Gio.Menu()
+            for label, target in items:
+                item = Gio.MenuItem.new(label, None)
+                item.set_action_and_target_value("gallery.category", GLib.Variant.new_string(target))
+                menu.append_item(item)
+            return menu
+        menu = Gio.Menu()
+        menu.append_section(None, section((ALL_CATEGORIES, "")))
+        menu.append_section(None, section(*((name, name) for name in names)))
+        return menu
 
     def _on_category_change(self, action, value):
         action.set_state(value)
-        self._button.popdown()
         self._set_category(value.get_string())
 
     def _set_category(self, name):
