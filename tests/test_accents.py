@@ -74,6 +74,7 @@ def test_system_accent_when_gsettings_fails(monkeypatch):
 @pytest.mark.parametrize("recorded, system, expected", [
     ("purple", "sage", "purple"), ("mate", None, "mate"), (None, "sage", "sage"),
     ("nosuch", "sage", "sage"), (None, None, "orange"), ("nosuch", None, "orange"), (None, "nosuch", "orange"),
+    ("system", "sage", "sage"), ("system", None, "orange"),     # a following folder previews the system's
 ])
 def test_initial_accent(recorded, system, expected):
     assert initial_accent(recorded, system) == expected

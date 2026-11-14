@@ -93,6 +93,28 @@ def test_different_symbols(folders):
     assert state.message is None
 
 
+def test_one_following_folder_gives_system(folders):
+    manifest = record(Music=Recipe("community", store.SYSTEM_ACCENT))
+    assert initial_state(folders("Music"), manifest, SYMBOLS) == InitialState(COMMUNITY, "system")
+
+
+def test_several_following_folders_give_system(folders):
+    manifest = record(Music=Recipe("community", "system"), Work=Recipe("community", "system", 1.3))
+    assert initial_state(folders("Music", "Work"), manifest, SYMBOLS) == InitialState(COMMUNITY, "system")
+
+
+@pytest.mark.parametrize("pinned", ["orange", "sage"])
+def test_following_and_pinned_give_no_accent(folders, pinned):
+    """Even when the pinned accent is the one the system has now: following is not the same as pinned."""
+    manifest = record(Music=Recipe("community", "system"), Work=Recipe("community", pinned))
+    assert initial_state(folders("Music", "Work"), manifest, SYMBOLS) == InitialState(COMMUNITY, None)
+
+
+def test_following_with_different_symbols_keeps_system_for_the_picker(folders):
+    manifest = record(Music=Recipe("community", "system"), Work=Recipe("starred", "system"))
+    assert initial_state(folders("Music", "Work"), manifest, SYMBOLS) == InitialState(None, "system")
+
+
 def test_different_symbols_and_accents(folders):
     manifest = record(Music=Recipe("community", "sage"), Work=Recipe("starred", "red"))
     assert initial_state(folders("Music", "Work"), manifest, SYMBOLS) == InitialState()

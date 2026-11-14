@@ -2,17 +2,28 @@
 manifest.json, one recipe per folder that has a custom icon, and icons/, the generated files Nautilus
 reads. No gio and no theme code here: callers pass in what they need, so any front end can use it.
 
-manifest.json, schema 1:
-  {"schema_version": 1,
+manifest.json, schema 2:
+  {"schema_version": 2,
    "folders": [{"path": "Music", "recipe": {"symbol": "community", "accent": "purple",
                                             "scale": 1.0, "align": "bbox"}}, ...]}
 "path" is relative to $HOME for folders inside it ("." is $HOME itself), absolute for the others.
+"accent" is a Yaru accent name (the folder keeps it: pinned) or "system" (SYSTEM_ACCENT: the folder
+follows the accent of the system icon theme). Schema 1 is the same without "system".
 The light/dark style is not stored: it follows the system theme whenever an icon is built."""
 import contextlib, dataclasses, errno, fcntl, json, os, stat, tempfile, urllib.parse
 
-SCHEMA_VERSION = 1
-# {version: function(data) -> data in schema version + 1}; the first one comes with schema 2.
-MIGRATIONS = {}
+SCHEMA_VERSION = 2
+SYSTEM_ACCENT = "system"     # the recipe's accent of a folder that follows the system accent
+
+
+def _from_schema_1(data):
+    """Schema 2 only adds the accent value "system"; every schema 1 accent is a concrete one, which
+    means pinned in schema 2, so the data stays as it is."""
+    return data
+
+
+# {version: function(data) -> data in schema version + 1}
+MIGRATIONS = {1: _from_schema_1}
 
 
 class ManifestError(Exception):
@@ -55,11 +66,16 @@ def folder_from_key(key):
 
 @dataclasses.dataclass(frozen=True)
 class Recipe:
-    """How a folder's icon is built. symbol: a name in Yaru's scalable tree, or an absolute file path."""
+    """How a folder's icon is built. symbol: a name in Yaru's scalable tree, or an absolute file path.
+    accent: a Yaru accent name (pinned) or SYSTEM_ACCENT (follows the system accent)."""
     symbol: str
     accent: str
     scale: float = 1.0
     align: str = "bbox"
+
+    @property
+    def follows_system(self):
+        return self.accent == SYSTEM_ACCENT
 
     def to_json(self):
         return dataclasses.asdict(self)

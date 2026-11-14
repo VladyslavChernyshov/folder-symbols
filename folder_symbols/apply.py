@@ -2,8 +2,8 @@
 the manifest of those folders (store.py) up to date."""
 import contextlib, dataclasses, hashlib, json, os, re, shlex, subprocess, sys
 
-from . import store, yaru
-from .store import Recipe
+from . import accents, store, yaru
+from .store import SYSTEM_ACCENT, Recipe
 from .svg import make_svg_for
 from .symbols import YARU_SYMBOLS, find_symbols, load_overrides, symbol_name
 from .yaru import Theme, builtin_themes, compose, find_theme_dir, render_symbol
@@ -105,15 +105,16 @@ def recipe_symbol(symbol, svg, symbols_dir):
 
 
 def resolve_theme(a):
-    """(theme to build with, accent to record or None). --theme is used as given; --accent takes the
-    light/dark style from the system; with neither, the system's variant is used, and a system theme
-    that is not Yaru stops with exit status 2 (nothing is built, set or recorded)."""
+    """(theme to build with, accent to record or None). --theme is used as given and pins its accent;
+    --accent NAME pins NAME and takes the light/dark style from the system; with neither (or --accent
+    system) the system's variant is used and the folder follows the system accent. A system theme that
+    is not Yaru stops with exit status 2 then (nothing is built, set or recorded)."""
     if a.theme:
         v = yaru.parse_variant(a.theme)
         return a.theme, v[0] if v else None
     current = yaru.current_icon_theme()
     v = yaru.parse_variant(current)
-    if a.accent:
+    if a.accent and a.accent != SYSTEM_ACCENT:
         if not v:
             sys.exit(f"the current icon theme '{current}' is not a Yaru variant, so the light/dark style "
                      f"is unknown: give the full variant instead, e.g. --theme {yaru.variant_name(a.accent, True)}")
@@ -123,7 +124,7 @@ def resolve_theme(a):
               f"e.g. --theme {yaru.variant_name('sage', True)}, or set a Yaru icon theme and use "
               f"--accent", file=sys.stderr)
         sys.exit(2)
-    return current, v[0]
+    return current, SYSTEM_ACCENT
 
 
 def theme_ref(theme_name, fmt="svg", icons_root=None):
@@ -196,22 +197,25 @@ def set_folder_icons(manifest, dirs, icon_path, recipe, set_icon=None):
     return results
 
 
-def apply_folders(dirs, symbol, accent, *, dark, symbols_dir, store_dir=None, manifest_path=None,
-                  set_icon=None):
+def apply_folders(dirs, symbol, accent, *, dark, symbols_dir, system_accent=None, store_dir=None,
+                  manifest_path=None, set_icon=None):
     """Apply one recipe (symbol and accent, default scale and align) to several folders. The icon is built
     once into the store's icons directory, with the same name and content that `apply FOLDER SYMBOL
     --accent ACCENT --symbols-dir SYMBOLS_DIR` gives in the same light/dark style, then set on each
     folder. The manifest is changed under one lock and saved once, for the folders whose icon was set;
     an existing recipe of such a folder is replaced as a whole.
 
+    accent: a Yaru accent name, which the folders keep (pinned), or SYSTEM_ACCENT: they follow the system
+    accent, and the icon is built with system_accent (the window passes the accent its preview shows;
+    None: the accent of the current icon theme). The icon file is the same as for that accent pinned.
     dark: the light/dark style to build in. The window passes the style its preview is drawn in
     (libadwaita's colour scheme); the CLI takes it from the icon theme's name, which normally agrees.
     symbol: a name looked up in symbols_dir, or a path to an .svg; it is recorded by name only for a name
     looked up in Yaru's own tree (YARU_SYMBOLS), else by absolute path. set_icon: see set_folder_icons.
 
     Returns one FolderResult per folder (duplicates dropped, order kept). Raises store.ManifestError
-    (manifest damaged or newer) or ApplyError (unknown accent or symbol, icon not built) before any
-    folder is changed."""
+    (manifest damaged or newer) or ApplyError (unknown accent or symbol, no system accent to follow,
+    icon not built) before any folder is changed."""
     seen, folders = set(), []
     for d in map(store.folder_path, dirs):
         if d not in seen:
@@ -221,8 +225,14 @@ def apply_folders(dirs, symbol, accent, *, dark, symbols_dir, store_dir=None, ma
         return []
     with store.editing(manifest_path) as m:
         m.check_writable()
+        build_accent = accent
+        if accent == SYSTEM_ACCENT:
+            build_accent = system_accent or accents.system_accent()
+            if build_accent is None:
+                raise ApplyError("the current icon theme is not a Yaru variant (or cannot be read), so there "
+                                 "is no system accent to follow; choose an accent")
         try:
-            theme_name = yaru.variant_name(accent, dark)
+            theme_name = yaru.variant_name(build_accent, dark)
         except ValueError as e:
             raise ApplyError(str(e)) from None
         svg = lookup_symbol(symbol, symbols_dir)
@@ -341,7 +351,8 @@ def prune(a):
 
 # ---------------------------------------------------------------- list
 def apply_command(entry):
-    """A ready-to-run command that applies this entry's recipe again (style taken from the system)."""
+    """A ready-to-run command that applies this entry's recipe again (style taken from the system); a
+    folder that follows the system accent gets `--accent system`."""
     r = entry.recipe
     sym = shell_path(r.symbol) if os.path.isabs(r.symbol) else shlex.quote(r.symbol)
     parts = ["folder-symbols", "apply", shell_path(entry.folder), sym, "--accent", shlex.quote(r.accent)]
@@ -364,12 +375,15 @@ def list_folders(a):
         print(f"No folders recorded (manifest: {m.path})")
         return
     rows = [("FOLDER", "SYMBOL", "ACCENT", "OPTIONS", "STATUS")]
+    # a following folder shows the system accent of now ("system (orange)"); read only when needed
+    system = accents.system_accent() if any(e.recipe.follows_system for e in items) else None
     for e in items:
         r = e.recipe
         opts = " ".join(([f"scale {r.scale:g}"] if r.scale != 1.0 else []) +
                         ([f"align {r.align}"] if r.align != "bbox" else [])) or "-"
         sym = display_path(r.symbol) if os.path.isabs(r.symbol) else r.symbol
-        rows.append((display_path(e.folder), sym, r.accent, opts,
+        accent = (f"{r.accent} ({system})" if system else r.accent) if r.follows_system else r.accent
+        rows.append((display_path(e.folder), sym, accent, opts,
                      store.icon_status(e.folder, gio_custom_icon)))
     widths = [max(len(row[i]) for row in rows) for i in range(4)]
     for row in rows:

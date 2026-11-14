@@ -4,7 +4,7 @@ import json, os, shlex, types
 import pytest
 
 from folder_symbols import apply as ap, cli, store, yaru
-from folder_symbols.store import ManifestError, Recipe
+from folder_symbols.store import SYSTEM_ACCENT, ManifestError, Recipe
 
 SQUARE = '<rect x="3" y="3" width="10" height="10" fill="#222"/>'
 
@@ -220,13 +220,16 @@ def test_apply_records_the_folder_and_dry_run_does_not(isolated_home, gio, sym, 
     cli.main(["apply", d, sym])
     icon = os.path.join(store.icons_dir(), "Yaru-dark-sq.svg")
     assert gio.icons == {d: "file://" + icon} and os.path.exists(icon)
-    assert store.lookup(d).recipe == Recipe(os.path.abspath(sym), "orange")
+    assert store.lookup(d).recipe == Recipe(os.path.abspath(sym), SYSTEM_ACCENT)
 
 
 @pytest.mark.parametrize("system, args, theme, accent", [
     ("Yaru-dark", ["--accent", "purple"], "Yaru-purple-dark", "purple"),
     ("Yaru-sage", ["--accent", "purple"], "Yaru-purple", "purple"),
-    ("Yaru-bark-dark", [], "Yaru-bark-dark", "bark"),
+    ("Yaru-bark-dark", [], "Yaru-bark-dark", SYSTEM_ACCENT),                # no option follows
+    ("Yaru-bark-dark", ["--accent", "system"], "Yaru-bark-dark", SYSTEM_ACCENT),
+    ("Yaru-mate", [], "Yaru-mate", SYSTEM_ACCENT),
+    ("Yaru-sage", ["--accent", "sage"], "Yaru-sage", "sage"),                # the system's accent, pinned
     ("Yaru-mate-dark", ["--accent", "orange"], "Yaru-dark", "orange"),
     ("Yaru", ["--theme", "Yaru-red-dark"], "Yaru-red-dark", "red"),      # the style is not recorded
 ])
@@ -274,8 +277,8 @@ def test_apply_options_outside_the_recipe_warn_and_use_their_own_file(isolated_h
     cli.main(["apply", c, sym, "--keep-opacity"])
     assert "not kept: --keep-opacity" in capsys.readouterr().err
     assert len(set(gio.icons.values())) == 3
-    assert store.lookup(b).recipe == Recipe(os.path.abspath(sym), "orange", 1.3, "mass")
-    assert store.lookup(c).recipe == Recipe(os.path.abspath(sym), "orange")
+    assert store.lookup(b).recipe == Recipe(os.path.abspath(sym), SYSTEM_ACCENT, 1.3, "mass")
+    assert store.lookup(c).recipe == Recipe(os.path.abspath(sym), SYSTEM_ACCENT)
 
 
 def test_apply_with_a_damaged_manifest_changes_nothing(isolated_home, gio, sym):
@@ -376,6 +379,7 @@ def test_list_commands_are_quoted_and_give_back_the_same_recipes(isolated_home, 
         str(isolated_home / "My Files" / "it's here"): Recipe("folder-open", "orange", 1.25, "mass"),
         str(isolated_home): Recipe(str(isolated_home / "my syms" / "x-symbolic.svg"), "sage", 0.8, "yaru"),
         str(tmp_path / "outside $dir"): Recipe("/opt/s y/z-symbolic.svg", "mate"),
+        str(isolated_home / "Follows"): Recipe("starred", SYSTEM_ACCENT, 1.1),
     }
     for d, r in recipes.items():                 # the folders do not exist: commands are not checked
         store.record(d, r)
@@ -386,6 +390,7 @@ def test_list_commands_are_quoted_and_give_back_the_same_recipes(isolated_home, 
     assert "folder-symbols apply ~/Music community --accent purple" in lines
     assert "folder-symbols apply ~/'My Files/it'\"'\"'s here' folder-open --accent orange --scale 1.25 " \
            "--align mass" in lines
+    assert "folder-symbols apply ~/Follows starred --accent system --scale 1.1" in lines
     for line in lines:
         words = shlex.split(line)
         assert words[:2] == ["folder-symbols", "apply"]
@@ -552,3 +557,111 @@ def test_prune_keeps_folders_below_a_dangling_symlinked_parent(isolated_home, gi
            "target)" in out
     assert "removed   ~/Disk/X" in out and "removed   ~/Gone" in out and "Removed 2 of 3 entries" in out
     assert [e.folder for e in store.entries()] == [below_dangling]
+
+
+# ------------------------------------------------------------- following the system accent (schema 2)
+SCHEMA_1 = {"schema_version": 1, "future": {"x": 1},
+            "folders": [{"path": "Music", "note": "kept", "recipe": {"symbol": "a", "accent": "red"}},
+                        {"path": "Work", "recipe": {"symbol": "b", "accent": "sage", "scale": 1.3}},
+                        {"bad": True}]}
+
+
+def test_schema_2_is_current_and_system_is_not_an_accent_name():
+    assert store.SCHEMA_VERSION == 2 and SYSTEM_ACCENT == "system"
+    assert SYSTEM_ACCENT not in yaru.accents()
+
+
+def test_schema_1_is_read_as_pinned_accents_and_written_back_as_schema_2(isolated_home):
+    write_manifest(SCHEMA_1)
+    assert [(e.recipe.accent, e.recipe.follows_system) for e in store.entries()] == [("red", False),
+                                                                                       ("sage", False)]
+    with open(store.manifest_path(), encoding="utf-8") as f:
+        assert json.load(f) == SCHEMA_1                         # reading does not rewrite the file
+    store.record(folder(isolated_home, "New"), Recipe("c", SYSTEM_ACCENT))
+    data = raw_manifest()
+    assert data["schema_version"] == 2 and data["future"] == {"x": 1}
+    assert data["folders"][0] == SCHEMA_1["folders"][0] and data["folders"][2] == SCHEMA_1["folders"][1]
+    assert data["folders"][1] == {"path": "New", "recipe": {"symbol": "c", "accent": "system",
+                                                            "scale": 1.0, "align": "bbox"}}
+    assert data["folders"][3] == {"bad": True}                  # unusable entries are kept, last
+
+
+def test_following_recipe_round_trip(isolated_home):
+    r = Recipe("community", SYSTEM_ACCENT, 1.2, "mass")
+    assert r.follows_system and not Recipe("community", "orange").follows_system
+    store.record(folder(isolated_home, "A"), r)
+    assert store.lookup(folder(isolated_home, "A")).recipe == r
+    assert raw_manifest()["folders"][0]["recipe"] == {"symbol": "community", "accent": "system",
+                                                      "scale": 1.2, "align": "mass"}
+
+
+def test_a_schema_3_manifest_is_read_only(isolated_home):
+    data = {"schema_version": 3, "folders": [{"path": "A", "recipe": {"symbol": "a", "accent": "system"}}]}
+    write_manifest(data)
+    assert store.entries()[0].recipe.follows_system
+    with pytest.raises(ManifestError, match="newer folder-symbols"):
+        store.record(folder(isolated_home, "B"), Recipe("a", "red"))
+    assert raw_manifest() == data
+
+
+def test_apply_accent_system_is_the_same_as_no_option(isolated_home, gio, sym, capsys):
+    a, b = folder(isolated_home, "A"), folder(isolated_home, "B")
+    cli.main(["apply", a, sym])
+    out_a = capsys.readouterr()
+    cli.main(["apply", b, sym, "--accent", "system"])
+    out_b = capsys.readouterr()
+    assert out_a.out.replace("/A", "/B") == out_b.out and out_a.err == out_b.err == ""
+    assert gio.icons[a] == gio.icons[b] == "file://" + os.path.join(store.icons_dir(), "Yaru-dark-sq.svg")
+    assert store.lookup(a).recipe == store.lookup(b).recipe == Recipe(os.path.abspath(sym), SYSTEM_ACCENT)
+
+
+def test_apply_accent_system_needs_a_yaru_system_theme(isolated_home, gio, sym, capsys):
+    gio.theme = "Adwaita"
+    d = folder(isolated_home, "F")
+    with pytest.raises(SystemExit) as e:
+        cli.main(["apply", d, sym, "--accent", "system"])
+    assert e.value.code == 2 and "'Adwaita' is not a Yaru variant" in capsys.readouterr().err
+    assert gio.calls == [] and store.lookup(d) is None and not os.path.exists(store.icons_dir())
+
+
+def test_apply_help_explains_system(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["apply", "--help"])
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "system (default)" in help_text and "(pinned)" in help_text
+    with pytest.raises(SystemExit):
+        cli.main(["list", "--help"])
+    assert "'system (orange)'" in " ".join(capsys.readouterr().out.split())
+
+
+def test_list_shows_the_system_accent_of_a_following_folder(isolated_home, gio, capsys):
+    follows, pinned = folder(isolated_home, "Follows"), folder(isolated_home, "Pinned")
+    store.record(follows, Recipe("a", SYSTEM_ACCENT))
+    store.record(pinned, Recipe("a", "red"))
+    gio.theme = "Yaru-bark-dark"
+    cli.main(["list"])
+    rows = {line.split()[0]: line.split()[2:4] for line in capsys.readouterr().out.splitlines()[1:]}
+    assert rows == {"~/Follows": ["system", "(bark)"], "~/Pinned": ["red", "-"]}
+    gio.theme = "Adwaita"                                       # no system accent: just "system"
+    cli.main(["list"])
+    rows = {line.split()[0]: line.split()[2] for line in capsys.readouterr().out.splitlines()[1:]}
+    assert rows == {"~/Follows": "system", "~/Pinned": "red"}
+
+
+def test_list_reads_the_system_theme_only_when_a_folder_follows(isolated_home, gio, capsys, monkeypatch):
+    store.record(folder(isolated_home, "Pinned"), Recipe("a", "red"))
+    monkeypatch.setattr(yaru, "current_icon_theme", lambda: pytest.fail("list read the system theme"))
+    cli.main(["list"])
+    assert "red" in capsys.readouterr().out
+
+
+def test_following_entries_are_reset_and_pruned_like_pinned_ones(isolated_home, gio, sym, capsys):
+    a, gone = folder(isolated_home, "A"), folder(isolated_home, "Gone")
+    cli.main(["apply", a, sym])
+    cli.main(["apply", gone, sym])
+    assert all(e.recipe.follows_system for e in store.entries())
+    os.rmdir(gone)
+    cli.main(["prune"])
+    assert [e.folder for e in store.entries()] == [a]
+    cli.main(["reset", a])
+    assert store.entries() == [] and a not in gio.icons

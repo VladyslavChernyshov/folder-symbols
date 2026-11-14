@@ -2,7 +2,8 @@
 no gsettings; nothing is written and no lock is taken): which symbol to select and which accent to preview.
 
 - every selected folder has a usable entry whose symbol is in the gallery, all with the same symbol:
-  that symbol (and the accent, when they all share one);
+  that symbol (and the accent, when they all share one; "system" (store.SYSTEM_ACCENT) when they all
+  follow the system accent, none when some follow and some are pinned);
 - anything else (no entry, some with and some without, different symbols): no symbol;
 - an entry whose symbol is not in the gallery counts as no entry (and is named in one stderr line);
 - a damaged or unreadable manifest counts as no entries; a newer schema is read normally."""
@@ -19,7 +20,8 @@ from .symbols import symbol_name
 @dataclass(frozen=True)
 class InitialState:
     symbol: Optional[Symbol] = None     # the gallery.Symbol to select, or None
-    accent: Optional[str] = None        # the recorded accent every selected folder shares, or None
+    accent: Optional[str] = None        # the recorded accent every selected folder shares (an accent name,
+                                        # or "system" when they all follow the system accent), or None
     message: Optional[str] = None       # one line for stderr (recorded symbols not found), or None
 
 

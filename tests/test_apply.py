@@ -233,3 +233,92 @@ def test_apply_module_does_not_import_gtk():
     code = "import sys, folder_symbols.apply, folder_symbols.store; print('gi' in sys.modules)"
     out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
+
+
+# ------------------------------------------------------------- following the system accent
+SYSTEM = store.SYSTEM_ACCENT
+
+
+def test_following_builds_with_the_given_system_accent_and_records_system(isolated_home, symbols_dir):
+    a, b = folders(isolated_home, "A", "B")
+    setter = Setter()
+    results = apply_folders([a, b], "sq", SYSTEM, dark=True, symbols_dir=symbols_dir, system_accent="sage",
+                            set_icon=setter)
+    assert [r.ok for r in results] == [True, True]
+    assert icon_files() == ["Yaru-sage-dark-sq.svg"]
+    assert all(e.recipe.accent == SYSTEM and e.recipe.follows_system for e in store.entries())
+
+
+@pytest.mark.parametrize("system, dark, variant", [("Yaru-bark", False, "Yaru-bark"),
+                                                   ("Yaru-bark-dark", True, "Yaru-bark-dark"),
+                                                   ("Yaru-mate-dark", False, "Yaru-mate"),
+                                                   ("Yaru", True, "Yaru-dark")])
+def test_following_without_a_given_accent_takes_the_icon_themes(isolated_home, symbols_dir, monkeypatch,
+                                                                system, dark, variant):
+    """The accent comes from the icon theme; the style is still `dark` (what the preview shows)."""
+    monkeypatch.setattr(yaru, "current_icon_theme", lambda: system)
+    [d] = folders(isolated_home, "A")
+    apply_folders([d], "sq", SYSTEM, dark=dark, symbols_dir=symbols_dir, set_icon=Setter())
+    assert icon_files() == [f"{variant}-sq.svg"] and store.lookup(d).recipe.follows_system
+
+
+@pytest.mark.parametrize("theme", ["Adwaita", None])
+def test_following_without_a_system_accent_changes_nothing(isolated_home, symbols_dir, monkeypatch, theme):
+    def current():
+        if theme is None:
+            raise subprocess.CalledProcessError(1, "gsettings")
+        return theme
+    monkeypatch.setattr(yaru, "current_icon_theme", current)
+    [d] = folders(isolated_home, "A")
+    setter = Setter()
+    with pytest.raises(ApplyError, match="no system accent to follow"):
+        apply_folders([d], "sq", SYSTEM, dark=False, symbols_dir=symbols_dir, set_icon=setter)
+    assert setter.calls == [] and icon_files() == [] and not os.path.exists(store.manifest_path())
+
+
+def test_a_following_and_a_pinned_folder_share_the_icon_file(isolated_home, symbols_dir):
+    follows, pinned = folders(isolated_home, "Follows", "Pinned")
+    s1, s2 = Setter(), Setter()
+    apply_folders([follows], "sq", SYSTEM, dark=False, symbols_dir=symbols_dir, system_accent="blue",
+                  set_icon=s1)
+    first = read(os.path.join(store.icons_dir(), "Yaru-blue-sq.svg"))
+    apply_folders([pinned], "sq", "blue", dark=False, symbols_dir=symbols_dir, set_icon=s2)
+    assert s1.calls[0][1] == s2.calls[0][1] and icon_files() == ["Yaru-blue-sq.svg"]
+    assert read(os.path.join(store.icons_dir(), "Yaru-blue-sq.svg")) == first
+    assert store.lookup(follows).recipe.accent == SYSTEM and store.lookup(pinned).recipe.accent == "blue"
+
+
+@pytest.mark.parametrize("system", ["Yaru-dark", "Yaru-sage", "Yaru-mate", "Yaru-mate-dark"])
+def test_following_gives_the_same_file_and_recipe_as_the_cli_without_options(isolated_home, symbols_dir,
+                                                                            tmp_path, monkeypatch, system):
+    monkeypatch.setattr(yaru, "current_icon_theme", lambda: system)
+    monkeypatch.setattr(ap, "gio_set", Setter())
+    cli_dir, gui_dir = folders(isolated_home, "CLI", "GUI")
+    cli.main(["apply", cli_dir, "sq", "--symbols-dir", symbols_dir])
+    [cli_icon] = icon_files()
+    accent, dark = yaru.parse_variant(system)
+    gui_store, gui_manifest = str(tmp_path / "gui-store"), str(tmp_path / "gui" / "manifest.json")
+    apply_folders([gui_dir], "sq", SYSTEM, dark=dark, symbols_dir=symbols_dir, system_accent=accent,
+                  store_dir=gui_store, manifest_path=gui_manifest, set_icon=Setter())
+    assert os.listdir(gui_store) == [cli_icon]
+    assert read(os.path.join(gui_store, cli_icon)) == read(os.path.join(store.icons_dir(), cli_icon))
+    assert store.lookup(cli_dir).recipe == store.lookup(gui_dir, gui_manifest).recipe
+    assert store.lookup(gui_dir, gui_manifest).recipe.follows_system
+
+
+def test_pinning_and_following_replace_each_other(isolated_home, symbols_dir):
+    [d] = folders(isolated_home, "A")
+    store.record(d, Recipe("old", "red", 1.3, "mass"))
+    apply_folders([d], "sq", SYSTEM, dark=False, symbols_dir=symbols_dir, system_accent="red", set_icon=Setter())
+    sym = os.path.join(symbols_dir, "actions", "sq-symbolic.svg")
+    assert store.lookup(d).recipe == Recipe(sym, SYSTEM)
+    apply_folders([d], "sq", "red", dark=False, symbols_dir=symbols_dir, set_icon=Setter())
+    assert store.lookup(d).recipe == Recipe(sym, "red")
+
+
+def test_system_is_not_a_concrete_accent_to_build_with(isolated_home, symbols_dir):
+    [d] = folders(isolated_home, "A")
+    with pytest.raises(ApplyError, match="unknown accent 'nosuch'"):
+        apply_folders([d], "sq", SYSTEM, dark=False, symbols_dir=symbols_dir, system_accent="nosuch",
+                      set_icon=Setter())
+    assert icon_files() == []

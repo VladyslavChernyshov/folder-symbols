@@ -4,7 +4,7 @@ import argparse, os, sys
 from . import __version__
 from .apply import apply, list_folders, prune, reset, reset_all
 from .batch import batch
-from .store import ManifestError
+from .store import SYSTEM_ACCENT, ManifestError
 from .svg import make_svg
 from .symbols import YARU_SYMBOLS, load_overrides
 from .yaru import Theme, accents, builtin_themes, compose, render_symbol, theme_ref_kind
@@ -114,7 +114,9 @@ def parser_apply():
                     "The icon uses the colours of the GNOME icon theme that is active now, so "
                     "re-run it after changing theme or accent colour. The folder and its recipe (symbol, "
                     "accent, scale, align) are recorded in the manifest, "
-                    "~/.local/share/folder-symbols/manifest.json, for 'list' and 'reset --all'.")
+                    "~/.local/share/folder-symbols/manifest.json, for 'list' and 'reset --all'. The "
+                    "accent is recorded as 'system' (the folder follows the system accent) unless "
+                    "--accent NAME or --theme pins one.")
     p.add_argument("apply", help=argparse.SUPPRESS)
     p.add_argument("folder", help="the folder that gets the icon, e.g. ~/Music")
     p.add_argument("symbol", help="symbol name, e.g. community (the file name without "
@@ -123,10 +125,12 @@ def parser_apply():
     which.add_argument("--theme", default=None, metavar="NAME",
                        help="Yaru theme variant to take colours from, e.g. Yaru-purple-dark. "
                             "Default: the current GNOME icon theme (gsettings)")
-    which.add_argument("--accent", default=None, choices=accents(), metavar="NAME",
+    which.add_argument("--accent", default=None, choices=accents() + (SYSTEM_ACCENT,), metavar="NAME",
                        help="accent colour of the folder, with the light or dark style of the current icon "
-                            f"theme: {', '.join(accents())} (orange is plain Yaru). "
-                            "Default: the accent of the current icon theme")
+                            f"theme. {SYSTEM_ACCENT} (default): the accent of the current icon theme, and the "
+                            "folder is recorded as following the system accent; or one of "
+                            f"{', '.join(accents())} (orange is plain Yaru): the folder keeps this accent "
+                            "(pinned)")
     p.add_argument("--icons-root", default=None, metavar="DIR",
                    help="measure the theme from the PNG folders in this directory instead of using "
                         "the built-in data (SVG), and look here first for PNG themes (then "
@@ -173,7 +177,9 @@ def parser_list():
         usage="folder-symbols list [--format table|commands]",
         description="Show the folders recorded in the manifest by 'apply', with their recipe and a "
                     "status: ok (the icon from the store is set), missing (no such folder), other icon "
-                    "(another custom icon is set), no icon (it was removed outside folder-symbols).")
+                    "(another custom icon is set), no icon (it was removed outside folder-symbols). A folder "
+                    "that follows the system accent shows it as e.g. 'system (orange)', with the system "
+                    "accent of now.")
     p.add_argument("list", help=argparse.SUPPRESS)
     p.add_argument("--format", choices=("table", "commands"), default="table",
                    help="table: one line per folder with its status (default); commands: one "

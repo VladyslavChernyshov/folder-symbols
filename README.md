@@ -20,12 +20,13 @@ sudo apt install python3-pil python3-numpy python3-scipy librsvg2-bin
 git clone https://github.com/VladyslavChernyshov/folder-symbols && cd folder-symbols
 
 # put a "community" symbol on ~/Music using your current icon theme
+# (the folder is recorded as following the system accent)
 ./folder-symbols apply ~/Music community
 
 # see all available symbol names
 ls /usr/share/icons/Yaru/scalable/*/ | grep -- -symbolic | sed 's/-symbolic.svg//' | less
 
-# the same symbol with another accent (light or dark follows your current theme)
+# the same symbol with another accent, kept for this folder (light or dark follows your current theme)
 ./folder-symbols apply ~/Music community --accent sage
 
 # the folders you gave an icon, and their status
@@ -43,11 +44,25 @@ Options: `--accent sage`, `--theme Yaru-purple-dark`, `--format png` (then `--si
 `--align bbox|mass|yaru`, `--keep-opacity`, `--dry-run`.
 
 `apply` also records the folder in `~/.local/share/folder-symbols/manifest.json` (under
-`$XDG_DATA_HOME` if it is set), with its recipe: symbol, accent, scale and align. The light or dark
+`$XDG_DATA_HOME` if it is set), with its recipe: symbol, accent, scale and align. The accent is
+either pinned or follows the system:
+
+* without `--accent` (or with `--accent system`) the icon gets the accent of the current icon theme,
+  and the recipe records `system`: the folder follows the system accent;
+* `--accent sage` (or `--theme Yaru-sage-dark`) pins the folder to that accent.
+
+Entries written by earlier versions name a concrete accent, so they count as pinned. The light or dark
 style is not stored; it comes from the system theme whenever the icon is built. If the system icon
 theme is not Yaru, `apply` needs `--theme` (or a Yaru theme for `--accent`). Other options
 (`--format png`, `--keep-opacity`, ...) still work but are not recorded. Icons set by older versions
 (in `~/.local/share/folder-icons/`) keep working; run `apply` again on such a folder to record it.
+
+The manifest has a schema version (2 since the `system` accent). A manifest from an earlier version
+is read as it is and saved as version 2 the next time it changes; after that, older versions of
+folder-symbols can still read it but refuse to change it.
+
+`list` shows a folder that follows the system as `system (orange)`, with the system accent of now,
+and a pinned one by its accent name.
 
 To set up the same icons on another computer, save the commands and run them there:
 
@@ -55,8 +70,9 @@ To set up the same icons on another computer, save the commands and run them the
 ./folder-symbols list --format commands > my-folders.sh
 ```
 
-Each line is a `folder-symbols apply ...` command, with paths written from `~`. A folder that does
-not exist there just gives the normal `apply` error; folders are never created.
+Each line is a `folder-symbols apply ...` command, with paths written from `~`, and `--accent system`
+for a folder that follows the system accent. A folder that does not exist there just gives the normal
+`apply` error; folders are never created.
 
 ## Commands
 
@@ -153,7 +169,8 @@ a minute on a desktop PC.
 
 * Nautilus accepts **one file per folder** in `metadata::custom-icon`, so an icon is tied to one
   theme variant: if you switch between light and dark, or change the accent colour, re-run
-  `apply` (or use a variant that fits both).
+  `apply` (or use a variant that fits both). A folder that follows the system accent is recorded as
+  such, but its icon is not rebuilt by itself yet when the accent or the style changes.
 * `apply` makes an SVG by default; `--format png` makes a 512 px PNG (Nautilus scales it down).
 * A folder moved in Nautilus (or with `gio move`) keeps its icon, because GVfs metadata follows the
   folder, but it is no longer in the manifest, so `list` and `reset --all` do not see it. Run
