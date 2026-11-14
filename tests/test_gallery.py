@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from conftest import SYMBOLS_DIR
-from folder_symbols.gallery import Symbol, categories, filter_symbols, list_symbols
+from folder_symbols.gallery import (Symbol, categories, category_tooltip, filter_symbols, list_symbols,
+                                    search_placeholder)
 from folder_symbols.symbols import default_symbols_dir, YARU_SYMBOLS
 
 ROOT = Path(__file__).parent.parent
@@ -126,6 +127,32 @@ def test_filter_by_query_and_category():
 def test_filter_no_matches():
     assert filter_symbols(SYMS, "zzz", None) == []
     assert filter_symbols(SYMS, "", "nonexistent") == []
+
+
+# ---------------------------------------------------------------------------
+# search_placeholder and category_tooltip
+# ---------------------------------------------------------------------------
+
+def test_placeholder_all_categories():
+    assert search_placeholder(SYMS, None) == "Search 5 symbols…"
+
+
+def test_placeholder_counts_the_category():
+    assert search_placeholder(SYMS, "places") == "Search 2 symbols in places…"
+    assert search_placeholder(SYMS, "actions") == f"Search {len(filter_symbols(SYMS, '', 'actions'))} symbols in actions…"
+
+
+def test_placeholder_singular():
+    assert search_placeholder(SYMS, "devices") == "Search 1 symbol in devices…"
+    assert search_placeholder(SYMS[:1], None) == "Search 1 symbol…"
+
+
+def test_placeholder_empty():
+    assert search_placeholder([], None) == "Search 0 symbols…"
+
+
+def test_category_tooltip():
+    assert category_tooltip("apps") == "Category: apps. Click to show all"
 
 
 # ---------------------------------------------------------------------------

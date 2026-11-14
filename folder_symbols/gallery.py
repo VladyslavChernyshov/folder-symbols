@@ -41,3 +41,16 @@ def matches(symbol, query, category):
 
 def filter_symbols(symbols, query, category):
     return [s for s in symbols if matches(s, query, category)]
+
+
+def search_placeholder(symbols, category):
+    """Placeholder of the search entry, with the number of symbols the search runs over:
+    "Search 1323 symbols…" for all categories (category None), "Search 87 symbols in apps…" for one."""
+    n = len(symbols) if category is None else sum(1 for s in symbols if s.category == category)
+    noun = "symbol" if n == 1 else "symbols"
+    return f"Search {n} {noun}…" if category is None else f"Search {n} {noun} in {category}…"
+
+
+def category_tooltip(category):
+    """Tooltip of the button that clears the chosen category."""
+    return f"Category: {category}. Click to show all"

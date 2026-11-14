@@ -2,11 +2,11 @@
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio
+from gi.repository import Adw, Gio, GLib
 
 from folder_symbols.preview import PreviewSession
 from folder_symbols.selection import normalise_paths
-from folder_symbols.gui.window import FolderSymbolsWindow
+from folder_symbols.gui.window import APP_TITLE, FolderSymbolsWindow
 
 APP_ID = "io.github.VladyslavChernyshov.FolderSymbols"
 
@@ -17,6 +17,7 @@ class FolderSymbolsApplication(Adw.Application):
             application_id=APP_ID,
             flags=Gio.ApplicationFlags.HANDLES_OPEN,
         )
+        GLib.set_application_name(APP_TITLE)
         self._window = None
         self._preview_session = None
 

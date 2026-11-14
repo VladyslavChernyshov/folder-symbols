@@ -1,4 +1,4 @@
-"""Path normalisation and window-title helpers (no GTK dependency)."""
+"""Path normalisation and sidebar-header text helpers (no GTK dependency)."""
 import os
 from urllib.parse import urlparse, unquote
 
@@ -39,23 +39,25 @@ def _tilde(path):
     return path
 
 
-def subtitle_text(dirs, total):
-    """Return the Adw.WindowTitle subtitle string.
+def panel_title(dirs):
+    """Return the title of the sidebar header: the folder name, "N folders", or "No folder selected".
 
-    dirs  – normalised existing directory list (output of normalise_paths)
-    total – len(dirs) + ignored_count  (duplicates do not contribute to total)
+    dirs – normalised existing directory list (output of normalise_paths)
     """
-    ignored = total - len(dirs)
-    if total == 0:
+    if not dirs:
         return "No folder selected"
-    if ignored > 0:
-        return f"{len(dirs)} of {total} selected items are folders"
     if len(dirs) == 1:
-        name = os.path.basename(dirs[0]) or dirs[0]
-        return f"{name} · {_tilde(dirs[0])}"
+        return os.path.basename(dirs[0]) or dirs[0]
     return f"{len(dirs)} folders"
 
 
-def tooltip_text(dirs):
-    """Return newline-separated folder names for the header tooltip."""
-    return "\n".join(os.path.basename(d) or d for d in dirs)
+def panel_tooltip(dirs, total):
+    """Return the tooltip of the sidebar header: one path per line (under $HOME as ~/...), preceded by
+    "N of M selected items are folders" when some selected items were not folders; "" if there is none.
+
+    total – len(dirs) + ignored_count  (duplicates do not contribute to total)
+    """
+    lines = [_tilde(d) for d in dirs]
+    if total > len(dirs):
+        lines.insert(0, f"{len(dirs)} of {total} selected items are folders")
+    return "\n".join(lines)

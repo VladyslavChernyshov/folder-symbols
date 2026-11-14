@@ -1,4 +1,4 @@
-"""PreviewPanel: the right-hand panel with the folder icon for the selected symbol."""
+"""PreviewPanel: the sidebar content with the folder icon for the selected symbol."""
 import sys
 
 import gi
@@ -8,18 +8,17 @@ from gi.repository import Adw, Gdk, Gio, Gtk
 
 from folder_symbols.preview import PreviewError, system_variant
 
-PANEL_WIDTH = 270                        # outer width, as the mockup's .side
-PANEL_PADDING = 18
+PANEL_PADDING = (6, 18, 18, 18)          # top right bottom left (mockup .side, under the sidebar header)
 PREVIEW_BOX_HEIGHT = 190                 # outer height, border included (mockup .prevbox, border-box)
 PREVIEW_BOX_BORDER = 1
 PREVIEW_BOX_RADIUS = 12
 PREVIEW_ICON_SIZE = 150
 
-# Only named theme colours. The panel is a faint foreground tint over the window background: slightly
-# darker than the gallery on a light theme and slightly lighter on a dark one, as in the mockup. The
-# preview box uses the same tokens as the gallery cards.
+# Only named theme colours. The panel has no background of its own: it sits in the split view's sidebar,
+# which draws the sidebar colour and the border to the gallery. The preview box uses the same tokens as
+# the gallery cards.
 PANEL_CSS = f"""
-.preview-panel {{ background-color: alpha(@window_fg_color, 0.03); padding: {PANEL_PADDING}px; }}
+.preview-panel {{ padding: {" ".join(f"{v}px" for v in PANEL_PADDING)}; }}
 .preview-box {{
   min-height: {PREVIEW_BOX_HEIGHT - 2 * PREVIEW_BOX_BORDER}px;
   background-color: @card_bg_color; border: {PREVIEW_BOX_BORDER}px solid @borders;
@@ -46,7 +45,7 @@ class PreviewPanel(Gtk.Box):
 
     def __init__(self, session, **kwargs):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, css_classes=["preview-panel"],
-                         width_request=PANEL_WIDTH, hexpand=False, vexpand=True, **kwargs)
+                         hexpand=False, vexpand=True, **kwargs)
         _load_css()
         self._session = session
         self._symbol = None

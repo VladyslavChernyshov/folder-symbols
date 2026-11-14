@@ -11,8 +11,8 @@ ROOT = Path(__file__).parent.parent
 
 from folder_symbols.selection import (
     normalise_paths,
-    subtitle_text,
-    tooltip_text,
+    panel_title,
+    panel_tooltip,
 )
 
 
@@ -104,88 +104,124 @@ def test_mixed_valid_and_invalid(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# subtitle_text
+# panel_title
 # ---------------------------------------------------------------------------
 
-def test_subtitle_empty():
-    assert subtitle_text([], 0) == "No folder selected"
+def test_title_empty():
+    assert panel_title([]) == "No folder selected"
 
 
-def test_subtitle_one_folder(isolated_home):
+def test_title_one_folder(isolated_home):
     music = isolated_home / "Music"
     music.mkdir()
-    dirs, ignored = normalise_paths([str(music)])
-    result = subtitle_text(dirs, len(dirs) + ignored)
-    assert result == "Music · ~/Music"
+    dirs, _ = normalise_paths([str(music)])
+    assert panel_title(dirs) == "Music"
 
 
-def test_subtitle_home_itself(isolated_home):
-    dirs, ignored = normalise_paths([str(isolated_home)])
-    result = subtitle_text(dirs, len(dirs) + ignored)
-    # basename of home is the temp dir name; display path should be "~"
-    name = isolated_home.name
-    assert result == f"{name} · ~"
+def test_title_home_itself(isolated_home):
+    dirs, _ = normalise_paths([str(isolated_home)])
+    assert panel_title(dirs) == isolated_home.name
 
 
-def test_subtitle_several_folders(tmp_path):
-    names = ["d1", "d2", "d3"]
+def test_title_root():
+    assert panel_title(["/"]) == "/"
+
+
+def test_title_several_folders(tmp_path):
     paths = []
-    for n in names:
-        d = tmp_path / n
-        d.mkdir()
-        paths.append(str(d))
-    dirs, ignored = normalise_paths(paths)
-    assert subtitle_text(dirs, len(dirs) + ignored) == "3 folders"
-
-
-def test_subtitle_some_ignored(tmp_path):
-    d1 = tmp_path / "good1"; d1.mkdir()
-    d2 = tmp_path / "good2"; d2.mkdir()
-    f  = tmp_path / "bad.txt"; f.write_text("x")
-    dirs, ignored = normalise_paths([str(d1), str(f), str(d2)])
-    assert subtitle_text(dirs, len(dirs) + ignored) == "2 of 3 selected items are folders"
-
-
-def test_subtitle_all_ignored(tmp_path):
-    f1 = tmp_path / "a.txt"; f1.write_text("x")
-    f2 = tmp_path / "b.txt"; f2.write_text("x")
-    dirs, ignored = normalise_paths([str(f1), str(f2)])
-    assert subtitle_text(dirs, len(dirs) + ignored) == "0 of 2 selected items are folders"
-
-
-def test_subtitle_duplicate_no_ignored_msg(isolated_home):
-    """Passing the same folder twice must not trigger the 'X of Y' ignored message."""
-    music = isolated_home / "Music"
-    music.mkdir()
-    dirs, ignored = normalise_paths([str(music), str(music)])
-    result = subtitle_text(dirs, len(dirs) + ignored)
-    assert result == "Music · ~/Music"
-
-
-# ---------------------------------------------------------------------------
-# tooltip_text
-# ---------------------------------------------------------------------------
-
-def test_tooltip_empty():
-    assert tooltip_text([]) == ""
-
-
-def test_tooltip_single(tmp_path):
-    d = tmp_path / "Jazz"
-    d.mkdir()
-    dirs, _ = normalise_paths([str(d)])
-    assert tooltip_text(dirs) == "Jazz"
-
-
-def test_tooltip_multiple(tmp_path):
-    names = ["Aaa", "Bbb", "Ccc"]
-    paths = []
-    for n in names:
+    for n in ["d1", "d2", "d3"]:
         d = tmp_path / n
         d.mkdir()
         paths.append(str(d))
     dirs, _ = normalise_paths(paths)
-    assert tooltip_text(dirs) == "Aaa\nBbb\nCcc"
+    assert panel_title(dirs) == "3 folders"
+
+
+def test_title_ignores_non_folders(tmp_path):
+    d1 = tmp_path / "good1"; d1.mkdir()
+    d2 = tmp_path / "good2"; d2.mkdir()
+    f  = tmp_path / "bad.txt"; f.write_text("x")
+    dirs, _ = normalise_paths([str(d1), str(f), str(d2)])
+    assert panel_title(dirs) == "2 folders"
+
+
+def test_title_all_ignored(tmp_path):
+    f1 = tmp_path / "a.txt"; f1.write_text("x")
+    f2 = tmp_path / "b.txt"; f2.write_text("x")
+    dirs, _ = normalise_paths([str(f1), str(f2)])
+    assert panel_title(dirs) == "No folder selected"
+
+
+def test_title_duplicate(isolated_home):
+    music = isolated_home / "Music"
+    music.mkdir()
+    dirs, _ = normalise_paths([str(music), str(music)])
+    assert panel_title(dirs) == "Music"
+
+
+# ---------------------------------------------------------------------------
+# panel_tooltip
+# ---------------------------------------------------------------------------
+
+def test_tooltip_empty():
+    assert panel_tooltip([], 0) == ""
+
+
+def test_tooltip_single_under_home(isolated_home):
+    jazz = isolated_home / "Music" / "Jazz"
+    jazz.mkdir(parents=True)
+    dirs, ignored = normalise_paths([str(jazz)])
+    assert panel_tooltip(dirs, len(dirs) + ignored) == "~/Music/Jazz"
+
+
+def test_tooltip_home_itself(isolated_home):
+    dirs, ignored = normalise_paths([str(isolated_home)])
+    assert panel_tooltip(dirs, len(dirs) + ignored) == "~"
+
+
+def test_tooltip_outside_home_is_absolute(isolated_home, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("outside")
+    assert not str(outside).startswith(str(isolated_home) + os.sep)
+    dirs, ignored = normalise_paths([str(outside)])
+    assert panel_tooltip(dirs, len(dirs) + ignored) == str(outside)
+
+
+def test_tooltip_root():
+    assert panel_tooltip(["/"], 1) == "/"
+
+
+def test_tooltip_multiple(isolated_home):
+    paths = []
+    for n in ["Aaa", "Bbb", "Ccc"]:
+        d = isolated_home / n
+        d.mkdir()
+        paths.append(str(d))
+    dirs, ignored = normalise_paths(paths)
+    assert panel_tooltip(dirs, len(dirs) + ignored) == "~/Aaa\n~/Bbb\n~/Ccc"
+
+
+def test_tooltip_some_ignored(isolated_home):
+    d1 = isolated_home / "good1"; d1.mkdir()
+    d2 = isolated_home / "good2"; d2.mkdir()
+    f  = isolated_home / "bad.txt"; f.write_text("x")
+    dirs, ignored = normalise_paths([str(d1), str(f), str(d2)])
+    assert panel_tooltip(dirs, len(dirs) + ignored) == (
+        "2 of 3 selected items are folders\n~/good1\n~/good2")
+
+
+def test_tooltip_all_ignored(tmp_path):
+    f1 = tmp_path / "a.txt"; f1.write_text("x")
+    f2 = tmp_path / "b.txt"; f2.write_text("x")
+    dirs, ignored = normalise_paths([str(f1), str(f2)])
+    assert panel_tooltip(dirs, len(dirs) + ignored) == "0 of 2 selected items are folders"
+
+
+def test_tooltip_duplicate_no_ignored_line(isolated_home):
+    """Passing the same folder twice must not add the 'X of Y' line."""
+    music = isolated_home / "Music"
+    music.mkdir()
+    dirs, ignored = normalise_paths([str(music), str(music)])
+    assert panel_tooltip(dirs, len(dirs) + ignored) == "~/Music"
 
 
 # ---------------------------------------------------------------------------
@@ -242,3 +278,4 @@ def test_gui_modules_importable():
         pytest.skip("PyGObject not installed")
     import folder_symbols.gui.application  # noqa: F401
     import folder_symbols.gui.window  # noqa: F401
+    import folder_symbols.gui.header  # noqa: F401

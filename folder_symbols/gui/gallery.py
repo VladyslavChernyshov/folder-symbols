@@ -1,14 +1,12 @@
-"""SymbolGallery: search row and a virtualised grid of symbols with single selection."""
+"""SymbolGallery: a virtualised grid of symbols with single selection, filtered by search text and category."""
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GObject, Gtk, Pango
 
-from folder_symbols.gallery import categories, matches
+from folder_symbols.gallery import matches
 
-ALL_CATEGORIES = "All categories"
-GALLERY_MARGIN = 16                      # window edge -> search row and grid cards (mockup .main padding)
-ROW_GAP = 10                             # search entry -> category drop-down (mockup .row gap)
+GALLERY_MARGIN = 16                      # pane edges and header bar -> grid cards (mockup .main padding)
 CARD_GAP = 7                             # between neighbouring cards, both ways (mockup .grid gap)
 CARD_HEIGHT = 78                         # outer height, border included (mockup .tile, border-box)
 CARD_MIN_WIDTH = 81                      # outer; with the margins 88 px per column, as before
@@ -18,33 +16,29 @@ RING_WIDTH = 3                           # accent ring of the selected card
 RING_OFFSET = -1
 RING_OUTSET = RING_WIDTH + RING_OFFSET   # how far the ring reaches outside the card: 2 px
 # Each grid child has margins that add up to CARD_GAP between neighbours (GTK margins are whole pixels).
-# Horizontally 3 + 4. Vertically the top margin is only RING_OUTSET, the least that keeps the ring of a
-# first-row card from being clipped at the top edge of the scrolled window.
+# Horizontally 3 + 4. Vertically the top margin is RING_OUTSET, so the ring of a first-row card stays
+# inside the grid's top padding.
 CARD_MARGIN_START = 3
 CARD_MARGIN_END = CARD_GAP - CARD_MARGIN_START
 CARD_MARGIN_TOP = RING_OUTSET
 CARD_MARGIN_BOTTOM = CARD_GAP - CARD_MARGIN_TOP
-# Padding under the search row, above the scroll divider (the top edge of the scrolled window). With the
-# first row's CARD_MARGIN_TOP below the divider, the cards sit exactly GALLERY_MARGIN under the row at
-# scroll position 0, the same as the row's distance to the title bar.
-SEARCH_BAR_PADDING = GALLERY_MARGIN - CARD_MARGIN_TOP
 ICON_SIZE = 32
 NAME_GAP = 9                             # symbol -> its name (mockup: 6 margin + 3 gap)
 NAME_FONT_SIZE = 10
 NAME_MAX_CHARS = 13                      # about the mockup's 80 px label width at 10 px
 
 # CSS padding of the grid, inside the scrolled content (as in GTK's file chooser grid), so the outer
-# edges of the cards sit GALLERY_MARGIN from the sides and GALLERY_MARGIN after the last row when
-# scrolled to the end. No top padding: SEARCH_BAR_PADDING + CARD_MARGIN_TOP already make GALLERY_MARGIN.
-GRID_PADDING = (0, GALLERY_MARGIN - CARD_MARGIN_END,
+# edges of the cards sit GALLERY_MARGIN from the header bar at scroll position 0, from the sides, and
+# after the last row when scrolled to the end.
+GRID_PADDING = (GALLERY_MARGIN - CARD_MARGIN_TOP, GALLERY_MARGIN - CARD_MARGIN_END,
                 GALLERY_MARGIN - CARD_MARGIN_BOTTOM, GALLERY_MARGIN - CARD_MARGIN_START)   # top right bottom left
 
 # Only named theme colours, so light, dark and high-contrast themes keep working.
-# - The grid is transparent and sits on the window background, like the search row.
+# - The grid is transparent and sits on the window background, like the flat header bar above it.
 # - The grid child is the selection/hover node: its own fill is removed (this provider's priority beats
 #   the theme for every state), and it has no padding, so the theme's focus ring on it follows the card.
-# - The scrolled window's undershoot.top node is what GTK draws over the top edge only while the content
-#   is scrolled; libadwaita gives it a faint shade, and a 1 px border line marks the search row's edge.
+# - The divider under the header bar while the grid is scrolled is libadwaita's own (Adw.ToolbarView with
+#   a flat top bar styles the scrolled window's undershoot), so there is no rule for it here.
 # - Every cell is a card. The selected one gets an accent ring instead of a fill, and an undimmed name.
 _px = lambda values: " ".join(f"{v}px" for v in values)
 GRID_CSS = f"""
@@ -62,7 +56,6 @@ gridview.symbol-gallery > child:selected .symbol-card {{
   border-color: transparent; outline: {RING_WIDTH}px solid @accent_bg_color; outline-offset: {RING_OFFSET}px;
 }}
 gridview.symbol-gallery > child:selected .symbol-card label {{ opacity: 1; }}
-scrolledwindow.symbol-scroller > undershoot.top {{ box-shadow: inset 0 1px @borders; }}
 """
 _css_loaded = False
 
@@ -86,7 +79,7 @@ class SymbolItem(GObject.Object):
 
 
 class SymbolGallery(Gtk.Box):
-    """Search entry and category drop-down above a grid of symbols.
+    """A grid of symbols, filtered with set_filter(), or "No symbols match".
     The property selected-symbol holds the selected gallery.Symbol, or None."""
 
     selected_symbol = GObject.Property(type=GObject.TYPE_PYOBJECT, nick="selected-symbol")
@@ -94,21 +87,8 @@ class SymbolGallery(Gtk.Box):
     def __init__(self, symbols, **kwargs):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, **kwargs)
         _load_css()
-        self._categories = categories(symbols)
-
-        self._search = Gtk.SearchEntry(
-            placeholder_text=f"Search {len(symbols)} symbols…",
-            hexpand=True,
-        )
-        self._search.connect("search-changed", self._on_filter_changed)
-        self._category = Gtk.DropDown.new_from_strings([ALL_CATEGORIES, *self._categories])
-        self._category.connect("notify::selected", self._on_filter_changed)
-
-        row = Gtk.Box(spacing=ROW_GAP, margin_top=GALLERY_MARGIN, margin_bottom=SEARCH_BAR_PADDING,
-                      margin_start=GALLERY_MARGIN, margin_end=GALLERY_MARGIN)
-        row.append(self._search)
-        row.append(self._category)
-        self.append(row)
+        self._query = ""
+        self._category = None
 
         store = Gio.ListStore(item_type=SymbolItem)
         store.splice(0, 0, [SymbolItem(s) for s in symbols])
@@ -125,10 +105,9 @@ class SymbolGallery(Gtk.Box):
         grid = Gtk.GridView(model=self._selection, factory=factory, min_columns=2, max_columns=12,
                             css_classes=["symbol-gallery"])
         # No margins here: the insets are the grid's CSS padding. The overlay scrollbar floats over the
-        # padding, so it neither moves cells nor changes the number of columns. The divider under the
-        # search row while scrolled is CSS on this widget (see GRID_CSS), so the layout does not change.
+        # padding, so it neither moves cells nor changes the number of columns.
         scroller = Gtk.ScrolledWindow(child=grid, hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True,
-                                      overlay_scrolling=True, css_classes=["symbol-scroller"])
+                                      overlay_scrolling=True)
 
         empty = Adw.StatusPage(
             title="No symbols match",
@@ -140,15 +119,14 @@ class SymbolGallery(Gtk.Box):
         self._stack.add_named(empty, "empty")
         self.append(self._stack)
 
-    def _current_category(self):
-        i = self._category.get_selected()
-        return self._categories[i - 1] if 0 < i <= len(self._categories) else None
+    def set_filter(self, query, category):
+        """Show the symbols whose name contains query and, unless category is None, of that category."""
+        if (query, category) != (self._query, self._category):
+            self._query, self._category = query, category
+            self._filter.changed(Gtk.FilterChange.DIFFERENT)
 
     def _match_item(self, item):
-        return matches(item.symbol, self._search.get_text(), self._current_category())
-
-    def _on_filter_changed(self, *_):
-        self._filter.changed(Gtk.FilterChange.DIFFERENT)
+        return matches(item.symbol, self._query, self._category)
 
     def _on_items_changed(self, model, *_):
         self._stack.set_visible_child_name("grid" if model.get_n_items() else "empty")

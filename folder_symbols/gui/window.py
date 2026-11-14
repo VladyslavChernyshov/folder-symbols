@@ -7,10 +7,16 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, GObject, Gtk
 
 from folder_symbols.gallery import list_symbols
-from folder_symbols.selection import subtitle_text, tooltip_text
 from folder_symbols.symbols import default_symbols_dir
 from folder_symbols.gui.gallery import SymbolGallery
+from folder_symbols.gui.header import FolderHeader, GalleryHeader
 from folder_symbols.gui.preview import PreviewPanel
+
+APP_TITLE = "Folder Symbols"
+DEFAULT_SIZE = (850, 600)                # mockup .win
+SIDEBAR_WIDTH_FRACTION = 0.32            # about 270 px at 850 px (mockup .right)
+SIDEBAR_MIN_WIDTH = 220
+SIDEBAR_MAX_WIDTH = 300
 
 
 class FolderSymbolsWindow(Adw.ApplicationWindow):
@@ -18,45 +24,60 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
     selected_symbol = GObject.Property(type=GObject.TYPE_PYOBJECT, nick="selected-symbol")
 
     def __init__(self, preview_session, **kwargs):
-        super().__init__(**kwargs)
+        super().__init__(title=APP_TITLE, **kwargs)
         self._preview_session = preview_session
-        self.set_default_size(900, 600)
+        self.set_default_size(*DEFAULT_SIZE)
 
-        self._title_widget = Adw.WindowTitle(
-            title="Folder icon",
-            subtitle="No folder selected",
+        # Nautilus-style split (Adw.OverlaySplitView, libadwaita >= 1.4): the gallery on the left, the
+        # preview sidebar on the right, never collapsed. Each pane has its own flat header bar, so the
+        # gallery's header has the window's colour and the sidebar's the sidebar colour. Each header bar
+        # shows only the window buttons on its window-edge side.
+        self._folder_header = FolderHeader()
+        panel = PreviewPanel(self._preview_session)
+        self.connect("notify::selected-symbol", lambda *_: panel.set_symbol(self.selected_symbol))
+        sidebar = Adw.ToolbarView()
+        sidebar.add_top_bar(self._folder_header)
+        sidebar.set_content(panel)
+
+        split = Adw.OverlaySplitView(
+            sidebar_position=Gtk.PackType.END, collapsed=False, show_sidebar=True,
+            sidebar_width_fraction=SIDEBAR_WIDTH_FRACTION,
+            min_sidebar_width=SIDEBAR_MIN_WIDTH, max_sidebar_width=SIDEBAR_MAX_WIDTH,
+            content=self._build_content(default_symbols_dir()), sidebar=sidebar,
         )
-        header = Adw.HeaderBar()
-        header.set_title_widget(self._title_widget)
+        self.set_content(split)
 
-        # Adw.ToolbarView (libadwaita >= 1.4; Ubuntu 24.04 ships 1.5)
+    def _build_content(self, symbols_dir):
+        """The gallery pane: its header bar over the symbol grid, or over a status page when symbols_dir
+        has no symbols. The divider under the header while the grid is scrolled is the ToolbarView's."""
+        symbols, problem = self._load_symbols(symbols_dir)
+        header = GalleryHeader(symbols)
+        header.search.set_key_capture_widget(self)      # typing anywhere in the window starts the search
         view = Adw.ToolbarView()
         view.add_top_bar(header)
-        view.set_content(self._build_body(default_symbols_dir()))
-        self.set_content(view)
+        if problem:
+            view.set_content(self._no_symbols(problem))
+            return view
+        gallery = SymbolGallery(symbols)
+        gallery.bind_property("selected-symbol", self, "selected-symbol", GObject.BindingFlags.SYNC_CREATE)
+        update = lambda *_: gallery.set_filter(header.query, header.category or None)
+        header.connect("notify::query", update)
+        header.connect("notify::category", update)
+        view.set_content(gallery)
+        return view
 
-    def _build_body(self, symbols_dir):
-        """The symbol gallery with the preview panel on its right, or a status page when symbols_dir has
-        no symbols. The search row and its scroll divider belong to the gallery, so they span only the
-        gallery column; the panel runs the full height under the header bar."""
+    @staticmethod
+    def _load_symbols(symbols_dir):
+        """Return (symbols, problem); problem is a message when there is nothing to show."""
         if not os.path.isdir(symbols_dir):
-            return self._no_symbols(f"Folder does not exist: {symbols_dir}")
+            return [], f"Folder does not exist: {symbols_dir}"
         try:
             symbols = list_symbols(symbols_dir)
         except OSError as e:
-            return self._no_symbols(f"Cannot read {symbols_dir}: {e.strerror or e}")
+            return [], f"Cannot read {symbols_dir}: {e.strerror or e}"
         if not symbols:
-            return self._no_symbols(f"No *-symbolic.svg files in {symbols_dir}")
-        gallery = SymbolGallery(symbols)
-        gallery.bind_property("selected-symbol", self, "selected-symbol", GObject.BindingFlags.SYNC_CREATE)
-        panel = PreviewPanel(self._preview_session)
-        self.connect("notify::selected-symbol", lambda *_: panel.set_symbol(self.selected_symbol))
-        body = Gtk.Box()
-        gallery.set_hexpand(True)
-        body.append(gallery)
-        body.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
-        body.append(panel)
-        return body
+            return [], f"No *-symbolic.svg files in {symbols_dir}"
+        return symbols, None
 
     @staticmethod
     def _no_symbols(reason):
@@ -69,7 +90,5 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         )
 
     def update_selection(self, dirs, total):
-        """Update header subtitle and tooltip from a new folder selection."""
-        self._title_widget.set_subtitle(subtitle_text(dirs, total))
-        tip = tooltip_text(dirs)
-        self._title_widget.set_tooltip_text(tip if tip else None)
+        """Show a new folder selection in the sidebar header (title and tooltip)."""
+        self._folder_header.set_selection(dirs, total)
