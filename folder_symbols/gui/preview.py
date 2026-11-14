@@ -66,9 +66,11 @@ class PreviewPanel(Gtk.Box):
         self._picker.connect("picked", lambda _p, accent: self._update(pick(self._choice, accent)))
         self._picker.connect("follow-toggled", lambda _p, on: self._update(set_follow(self._choice, on)))
         self.append(self._picker)
-        # The buttons at the bottom right (mock7 .btns): Apply, the suggested action; Reset goes to its left.
+        # The buttons at the bottom right (mock7 .btns): Reset, then Apply, the suggested action.
         buttons = Gtk.Box(spacing=BUTTON_GAP, halign=Gtk.Align.END, valign=Gtk.Align.END, vexpand=True)
+        self.reset_button = Gtk.Button(label="Reset", sensitive=False)
         self.apply_button = Gtk.Button(label="Apply", css_classes=["suggested-action"], sensitive=False)
+        buttons.append(self.reset_button)
         buttons.append(self.apply_button)
         self.append(buttons)
         self.set_initial_accent(None)

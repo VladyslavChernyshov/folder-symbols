@@ -8,10 +8,11 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, GObject, Gtk
 
-from folder_symbols.apply import ApplyError, RecordError, apply_folders
+from folder_symbols.apply import ApplyError, RecordError, apply_folders, reset_folders
 from folder_symbols.gallery import list_symbols
-from folder_symbols.initial import initial_state, read_manifest
-from folder_symbols.outcome import apply_block_reason, apply_outcome, apply_tooltip
+from folder_symbols.initial import initial_state, read_manifest, recorded_folders
+from folder_symbols.outcome import (apply_block_reason, apply_outcome, apply_tooltip, reset_button_state,
+                                    reset_confirmation, reset_outcome)
 from folder_symbols.store import ManifestError
 from folder_symbols.symbols import default_symbols_dir
 from folder_symbols.gui.gallery import SymbolGallery
@@ -23,19 +24,20 @@ DEFAULT_SIZE = (850, 600)                # mockup .win
 SIDEBAR_WIDTH_FRACTION = 0.32            # about 270 px at 850 px (mockup .right)
 SIDEBAR_MIN_WIDTH = 220
 SIDEBAR_MAX_WIDTH = 300
-DETAILS_MAX_HEIGHT = 240                 # the failed-folder list in the Apply dialog scrolls above this
+DETAILS_MAX_HEIGHT = 240                 # folder lists in the dialogs scroll above this height
 
 
 class FolderSymbolsWindow(Adw.ApplicationWindow):
     # The gallery.Symbol selected in the gallery, or None.
     selected_symbol = GObject.Property(type=GObject.TYPE_PYOBJECT, nick="selected-symbol")
 
-    def __init__(self, preview_session, apply_func=apply_folders, **kwargs):
-        """apply_func: what Apply calls, apply.apply_folders by default (a stub in tests and self-checks)."""
+    def __init__(self, preview_session, apply_func=apply_folders, reset_func=reset_folders, **kwargs):
+        """apply_func, reset_func: what Apply and Reset call, apply.apply_folders and apply.reset_folders
+        by default (stubs in tests and self-checks)."""
         super().__init__(title=APP_TITLE, **kwargs)
         self._preview_session = preview_session
-        self._apply_func = apply_func
-        self._dirs, self._applying = [], False
+        self._apply_func, self._reset_func = apply_func, reset_func
+        self._dirs, self._recorded, self._busy = [], [], False
         self._symbols_dir = default_symbols_dir()
         self._symbols, self._gallery_header, self._gallery = [], None, None
         self.set_default_size(*DEFAULT_SIZE)
@@ -48,7 +50,8 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         self._panel = PreviewPanel(self._preview_session)
         self.connect("notify::selected-symbol", lambda *_: self._on_symbol())
         self._panel.apply_button.connect("clicked", lambda *_: self._on_apply())
-        self._update_apply_button()
+        self._panel.reset_button.connect("clicked", lambda *_: self._on_reset())
+        self._update_buttons()
         sidebar = Adw.ToolbarView()
         sidebar.add_top_bar(self._folder_header)
         sidebar.set_content(self._panel)
@@ -111,10 +114,11 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         shown even when the previous filter would hide it."""
         self._folder_header.set_selection(dirs, total)
         self._dirs = list(dirs)
-        self._update_apply_button()
+        manifest, problem = read_manifest()
+        self._recorded = recorded_folders(self._dirs, manifest)
+        self._update_buttons()
         if self._gallery is None:                         # no symbols: only the status page
             return
-        manifest, problem = read_manifest()
         state = initial_state(dirs, manifest, self._symbols, self._symbols_dir)
         for line in (problem, state.message):
             if line:
@@ -123,53 +127,91 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         self._panel.set_initial_accent(state.accent)
         self._gallery.select_symbol(state.symbol)
 
-    # ------------------------------------------------------------- Apply
+    # ------------------------------------------------------------- Apply and Reset
     def _on_symbol(self):
         self._panel.set_symbol(self.selected_symbol)
-        self._update_apply_button()
+        self._update_buttons()
 
-    def _update_apply_button(self):
-        reason = apply_block_reason(self.selected_symbol is not None, len(self._dirs), self._applying)
+    def _update_buttons(self):
+        reason = apply_block_reason(self.selected_symbol is not None, len(self._dirs), self._busy)
         button = self._panel.apply_button
         button.set_sensitive(reason is None)
         button.set_tooltip_text(reason or apply_tooltip(len(self._dirs)))
+        label, sensitive, tooltip = reset_button_state(len(self._dirs), len(self._recorded), self._busy)
+        button = self._panel.reset_button
+        button.set_label(label)
+        button.set_sensitive(sensitive)
+        button.set_tooltip_text(tooltip)
 
     def _on_apply(self):
         """Apply what the panel shows now to the selected folders: close on success, else a dialog. The
         choice and the folders are frozen at the click; the call is synchronous."""
         choice, dirs = self._panel.current_choice(), tuple(self._dirs)
-        if self._applying or choice.symbol is None or not dirs:
+        if self._busy or choice.symbol is None or not dirs:
             return
-        self._applying = True
-        self._update_apply_button()
+        self._run(lambda: self._apply_func(list(dirs), choice.symbol.name, choice.accent, dark=choice.dark,
+                                           system_accent=choice.system_accent, symbols_dir=self._symbols_dir),
+                  apply_outcome)
+
+    def _on_reset(self):
+        """Reset the selected folders that have a manifest entry, frozen at the click: one at once, several
+        after a confirmation. Close on success, else a dialog."""
+        targets = tuple(self._recorded)
+        if self._busy or not targets:
+            return
+        if len(targets) == 1:
+            self._reset(targets)
+            return
+        heading, body, details = reset_confirmation(targets)
+        dialog = Adw.AlertDialog(heading=heading, body=body)
+        dialog.set_extra_child(self._details(details))
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("reset", "Reset")
+        dialog.set_response_appearance("reset", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", lambda _d, response: response == "reset" and self._reset(targets))
+        dialog.present(self)
+
+    def _reset(self, targets):
+        self._run(lambda: self._reset_func(list(targets)), reset_outcome)
+
+    def _run(self, call, outcome_of):
+        """Run call() (synchronously) with both buttons blocked, then close the window if every folder was
+        done, else re-read which selected folders have an entry and show the outcome dialog."""
+        self._busy = True
+        self._update_buttons()
         try:
-            results = self._apply_func(list(dirs), choice.symbol.name, choice.accent, dark=choice.dark,
-                                       system_accent=choice.system_accent, symbols_dir=self._symbols_dir)
+            results = call()
         except Exception as e:                            # every failure ends in a dialog, never a crash
             if not isinstance(e, (ManifestError, ApplyError, RecordError)):
                 traceback.print_exc()                     # unexpected: keep the details for a bug report
-            outcome = apply_outcome(error=e)
+            outcome = outcome_of(error=e)
         else:
-            outcome = apply_outcome(results=results)
+            outcome = outcome_of(results=results)
         finally:
-            self._applying = False
-            self._update_apply_button()
+            self._busy = False
         if outcome.close:
             self.close()
-        else:
-            self._show_outcome(outcome)
+            return
+        manifest, _problem = read_manifest()              # the entries may have changed: recount for Reset
+        self._recorded = recorded_folders(self._dirs, manifest)
+        self._update_buttons()
+        self._show_outcome(outcome)
+
+    @staticmethod
+    def _details(text):
+        # selectable for copying with the mouse, but not focusable: it would take the focus from the
+        # buttons and show all its text selected when the dialog opens
+        label = Gtk.Label(label=text, xalign=0, wrap=True, selectable=True, focusable=False,
+                          css_classes=["caption"])
+        return Gtk.ScrolledWindow(child=label, propagate_natural_height=True,
+                                  max_content_height=DETAILS_MAX_HEIGHT, hscrollbar_policy=Gtk.PolicyType.NEVER)
 
     def _show_outcome(self, outcome):
         dialog = Adw.AlertDialog(heading=outcome.title, body=outcome.body)
         if outcome.details:
-            # selectable for copying with the mouse, but not focusable: it would take the focus from the
-            # buttons and show all its text selected when the dialog opens
-            label = Gtk.Label(label=outcome.details, xalign=0, wrap=True, selectable=True, focusable=False,
-                              css_classes=["caption"])
-            scroll = Gtk.ScrolledWindow(child=label, propagate_natural_height=True,
-                                        max_content_height=DETAILS_MAX_HEIGHT,
-                                        hscrollbar_policy=Gtk.PolicyType.NEVER)
-            dialog.set_extra_child(scroll)
+            dialog.set_extra_child(self._details(outcome.details))
         if outcome.close_button:
             dialog.add_response("close", "Close Window")
         dialog.add_response("ok", "OK")

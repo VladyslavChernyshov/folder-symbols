@@ -297,6 +297,52 @@ def apply(a):
 
 
 # ---------------------------------------------------------------- reset
+NOT_FOUND = "not found, entry kept"      # FolderResult.message of a folder that does not exist
+
+
+def unset_folder_icons(manifest, folders, unset_icon=None):
+    """Remove the custom icon of each folder, one by one: a failure is reported in that folder's
+    FolderResult and does not stop the others. A folder that does not exist fails with NOT_FOUND (it may
+    be on a drive that is not mounted). Only folders whose icon was removed lose their manifest entry;
+    the caller holds manifest in a store.editing() block, which saves it once at the end.
+    unset_icon(folder) raises GioError or OSError on failure; None means gio_unset (looked up at call time)."""
+    unset_icon = unset_icon or gio_unset
+    results = []
+    for folder in folders:
+        if not os.path.exists(folder):
+            results.append(FolderResult(folder, False, NOT_FOUND))
+            continue
+        try:
+            unset_icon(folder)
+        except (GioError, OSError) as e:
+            results.append(FolderResult(folder, False, str(e)))
+            continue
+        manifest.remove(folder)
+        results.append(FolderResult(folder, True, "icon reset"))
+    return results
+
+
+def reset_folders(dirs, *, manifest_path=None, unset_icon=None):
+    """Give several folders their normal icon again (what `reset --all` does, for these folders): the
+    manifest is changed under one lock and saved once, and only folders whose icon was removed lose their
+    entry. Returns one FolderResult per folder (duplicates dropped, order kept). Raises store.ManifestError
+    (manifest damaged or newer) before any folder is touched, and RecordError when the icons were removed
+    but the manifest could not be saved afterwards. unset_icon: see unset_folder_icons."""
+    folders = list(dict.fromkeys(map(store.folder_path, dirs)))
+    if not folders:
+        return []
+    results = None                   # set once the icons are removed: an OSError after that is the save's
+    try:
+        with store.editing(manifest_path) as m:
+            m.check_writable()
+            results = unset_folder_icons(m, folders, unset_icon)
+    except OSError as e:
+        if results is None:
+            raise
+        raise RecordError(results, e) from e
+    return results
+
+
 def reset(a):
     folder = os.path.abspath(os.path.expanduser(a.folder))
     with store.editing() as m:
@@ -307,11 +353,9 @@ def reset(a):
                 print(f"{display_path(folder)}: folder not found; removed from the manifest")
                 return
             sys.exit(f"{folder}: no such folder")
-        try:
-            gio_unset(folder)
-        except GioError as e:
-            sys.exit(f"gio failed: {e}")
-        m.remove(folder)
+        [result] = unset_folder_icons(m, [folder])
+        if not result.ok:
+            sys.exit(f"gio failed: {result.message}")
 
 
 def reset_all(a):
@@ -321,22 +365,17 @@ def reset_all(a):
         _warn(m)
         m.check_writable()
         items = m.entries()
-        failed = 0
-        for e in items:
-            label = display_path(e.folder)
-            if not os.path.exists(e.folder):
+        results = unset_folder_icons(m, [e.folder for e in items])
+        for r in results:
+            label = display_path(r.folder)
+            if r.ok:
+                print(f"ok      {label}")
+            elif r.message == NOT_FOUND:
                 print(f"FAILED  {label}: not found, entry kept; run 'folder-symbols reset "
-                      f"{shell_path(e.folder)}' to forget it")
-                failed += 1
-                continue
-            try:
-                gio_unset(e.folder)
-            except (GioError, OSError) as err:
-                print(f"FAILED  {label}: {err}")
-                failed += 1
-                continue
-            m.remove(e.folder)
-            print(f"ok      {label}")
+                      f"{shell_path(r.folder)}' to forget it")
+            else:
+                print(f"FAILED  {label}: {r.message}")
+        failed = sum(1 for r in results if not r.ok)
     print(f"Reset {len(items) - failed} of {len(items)} folders" if items else "No folders in the manifest")
     if failed:
         sys.exit(1)

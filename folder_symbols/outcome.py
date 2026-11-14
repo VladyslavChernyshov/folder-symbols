@@ -1,13 +1,53 @@
-"""What the window does after Apply (no GTK): close, or show a dialog with a summary and the failed folders;
-and the Apply button's state. Works on apply.FolderResult lists and the errors apply_folders raises."""
+"""What the window does after Apply or Reset (no GTK): close, or show a dialog with a summary and the
+failed folders; the buttons' state; the Reset confirmation. Works on apply.FolderResult lists and the
+errors apply_folders and reset_folders raise."""
 import dataclasses
+import functools
 from typing import Optional
 
 from .apply import ApplyError, RecordError
 from .selection import tilde
 from .store import ManifestError
 
-RECORD_HINT = "'folder-symbols list' and 'reset --all' will not see them."
+
+@dataclasses.dataclass(frozen=True)
+class Wording:
+    """The texts of one action; {n}, {done}, {total} and {error} are filled in."""
+    done_one: str                # all ok, one folder
+    done_many: str               # all ok, several
+    partial: str                 # "{done} of {total}, {failed} failed"
+    partial_body: str
+    failed_one: str
+    failed_many: str
+    nothing: str                 # an error before anything was touched
+    record_title: str
+    record_body: str
+    unexpected_body: str
+
+
+APPLY = Wording(
+    done_one="Applied to 1 folder", done_many="Applied to {n} folders",
+    partial="Applied to {done} of {total}, {failed} failed",
+    partial_body="The other folders have their new icon.",
+    failed_one="Could not apply to the folder", failed_many="Could not apply to any of the {n} folders",
+    nothing="Nothing was applied",
+    record_title="Icons set, but not recorded",
+    record_body="The icon was set on {done} of {total}, but the manifest could not be saved: {error}. "
+                "'folder-symbols list' and 'reset --all' will not see them.",
+    unexpected_body="{error}. Some folders may already have their new icon; 'folder-symbols list' shows them.",
+)
+RESET = Wording(
+    done_one="Reset 1 folder", done_many="Reset {n} folders",
+    partial="Reset {done} of {total}, {failed} failed",
+    partial_body="The other folders have their normal icon again.",
+    failed_one="Could not reset the folder", failed_many="Could not reset any of the {n} folders",
+    nothing="Nothing was reset",
+    record_title="Icons reset, but not recorded",
+    record_body="The icon was reset on {done} of {total}, but the manifest could not be saved: {error}. "
+                "'folder-symbols list' still shows them, as 'no icon'.",
+    unexpected_body="{error}. Some folders may already have their normal icon again; 'folder-symbols list' "
+                    "shows them.",
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -27,42 +67,43 @@ def _lines(results):
     return "\n".join(f"{tilde(r.folder)}: {r.message}" for r in results if not r.ok)
 
 
-def summarize(results):
+def summarize(results, wording=APPLY):
     """(title, details) for a list of FolderResult: details has one line per failed folder."""
     failed = sum(1 for r in results if not r.ok)
     if not results:
         return "No folders were changed", ""
     if not failed:
-        return f"Applied to {_folders(len(results))}", ""
+        return (wording.done_one if len(results) == 1 else wording.done_many.format(n=len(results))), ""
     if failed == len(results):
-        title = ("Could not apply to the folder" if failed == 1
-                 else f"Could not apply to any of the {failed} folders")
+        title = wording.failed_one if failed == 1 else wording.failed_many.format(n=failed)
         return title, _lines(results)
-    return f"Applied to {len(results) - failed} of {len(results)}, {failed} failed", _lines(results)
+    return wording.partial.format(done=len(results) - failed, total=len(results), failed=failed), _lines(results)
 
 
-def apply_outcome(results=None, error=None):
-    """The Outcome of an Apply: results (the FolderResult list) or error (what apply_folders raised)."""
+def run_outcome(wording, results=None, error=None):
+    """The Outcome of an Apply or Reset: results (the FolderResult list) or error (what was raised)."""
     if error is not None:
         if isinstance(error, RecordError):
             done = sum(1 for r in error.results if r.ok)
-            return Outcome(False, "Icons set, but not recorded",
-                           f"The icon was set on {done} of {_folders(len(error.results))}, but the manifest "
-                           f"could not be saved: {error.error}. {RECORD_HINT}",
+            return Outcome(False, wording.record_title,
+                           wording.record_body.format(done=done, total=_folders(len(error.results)),
+                                                      error=error.error),
                            _lines(error.results))
         if isinstance(error, (ManifestError, ApplyError)):
-            return Outcome(False, "Nothing was applied", str(error))
+            return Outcome(False, wording.nothing, str(error))
         return Outcome(False, "Something went wrong",
-                       f"{type(error).__name__}: {error}. Some folders may already have their new icon; "
-                       "'folder-symbols list' shows them.")
+                       wording.unexpected_body.format(error=f"{type(error).__name__}: {error}"))
     results = list(results or [])
-    title, details = summarize(results)
+    title, details = summarize(results, wording)
     if results and not details:
         return Outcome(True, title)
     partial = bool(details) and any(r.ok for r in results)
-    body = ("The other folders have their new icon." if partial
-            else "No folder was changed." if results else "")
+    body = wording.partial_body if partial else "No folder was changed." if results else ""
     return Outcome(False, title, body, details, close_button=partial)
+
+
+apply_outcome = functools.partial(run_outcome, APPLY)
+reset_outcome = functools.partial(run_outcome, RESET)
 
 
 def apply_block_reason(has_symbol, n_dirs, running) -> Optional[str]:
@@ -80,3 +121,32 @@ def apply_tooltip(n_dirs):
     """The tooltip of the Apply button when it can be clicked."""
     return ("Set this symbol and accent on the selected folder" if n_dirs == 1
             else f"Set this symbol and accent on the {n_dirs} selected folders")
+
+
+def reset_button_state(n_dirs, n_recorded, running):
+    """(label, sensitive, tooltip) of the Reset button: n_dirs selected folders, n_recorded of them with a
+    manifest entry (the ones Reset acts on)."""
+    if n_dirs > 1 and n_recorded:
+        label = f"Reset {n_recorded}" if n_recorded == n_dirs else f"Reset {n_recorded} of {n_dirs}"
+    else:
+        label = "Reset"
+    if running:
+        return label, False, "Working…"
+    if not n_dirs:
+        return label, False, "No folder selected"
+    if not n_recorded:
+        return label, False, ("This folder has no icon from Folder Symbols" if n_dirs == 1
+                              else "None of the selected folders has an icon from Folder Symbols")
+    if n_dirs == 1:
+        return label, True, "Give the folder its normal icon again"
+    if n_recorded == n_dirs:
+        return label, True, f"Give the {n_dirs} selected folders their normal icon again"
+    if n_recorded == 1:
+        return label, True, "Give the one folder with an icon from Folder Symbols its normal icon again"
+    return label, True, f"Give the {n_recorded} folders with an icon from Folder Symbols their normal icon again"
+
+
+def reset_confirmation(folders):
+    """(heading, body, details) of the question asked before resetting several folders."""
+    return (f"Reset the icons of {len(folders)} folders?", "They get the normal folder icon of the theme again.",
+            "\n".join(tilde(f) for f in folders))

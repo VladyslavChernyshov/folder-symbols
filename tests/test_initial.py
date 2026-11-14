@@ -10,7 +10,8 @@ import pytest
 
 from folder_symbols import store
 from folder_symbols.gallery import Symbol
-from folder_symbols.initial import InitialState, initial_state, read_manifest, resolve_symbol
+from folder_symbols.initial import (InitialState, initial_state, read_manifest, recorded_folders,
+                                    resolve_symbol)
 from folder_symbols.selection import normalise_paths
 from folder_symbols.store import Recipe
 
@@ -272,3 +273,16 @@ def test_initial_module_does_not_import_gi():
             "assert 'gi' not in sys.modules, 'gi was imported'")
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=str(ROOT))
     assert r.returncode == 0, r.stderr
+
+
+# ------------------------------------------------------------- the folders Reset acts on
+
+def test_recorded_folders_keeps_the_selection_order_and_skips_folders_without_an_entry(folders):
+    manifest = record(Work=Recipe("community", "sage"), Music=Recipe("starred", "system"))
+    dirs = folders("Work", "Other", "Music")
+    assert recorded_folders(dirs, manifest) == [dirs[0], dirs[2]]
+    assert recorded_folders(folders("Other"), manifest) == []
+
+
+def test_recorded_folders_without_a_usable_manifest(folders):
+    assert recorded_folders(folders("Music"), None) == []

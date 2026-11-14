@@ -6,7 +6,8 @@ import sys
 import pytest
 
 from folder_symbols.apply import ApplyError, FolderResult, RecordError
-from folder_symbols.outcome import Outcome, apply_block_reason, apply_outcome, apply_tooltip, summarize
+from folder_symbols.outcome import (RESET, Outcome, apply_block_reason, apply_outcome, apply_tooltip,
+                                    reset_button_state, reset_confirmation, reset_outcome, summarize)
 from folder_symbols.store import ManifestError
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -119,3 +120,70 @@ def test_outcome_module_does_not_import_gi():
     code = "import sys, folder_symbols.outcome; print('gi' in sys.modules)"
     out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
+
+
+# ------------------------------------------------------------- Reset
+def test_reset_summaries():
+    a, b, c, d, e = home("A", "B", "C", "D", "E")
+    assert summarize([], RESET) == ("No folders were changed", "")
+    assert summarize([ok(a)], RESET) == ("Reset 1 folder", "")
+    assert summarize([ok(a), ok(b)], RESET) == ("Reset 2 folders", "")
+    assert summarize([ok(a), ok(b), ok(c), bad(d, "not found, entry kept"), ok(e)], RESET) == \
+        ("Reset 4 of 5, 1 failed", "~/D: not found, entry kept")
+    assert summarize([bad(a)], RESET) == ("Could not reset the folder", "~/A: fake failure")
+    assert summarize([bad(a), bad(b), bad(c)], RESET)[0] == "Could not reset any of the 3 folders"
+
+
+def test_reset_outcomes():
+    a, b = home("A", "B")
+    assert reset_outcome(results=[ok(a), ok(b)]) == Outcome(True, "Reset 2 folders")
+    o = reset_outcome(results=[ok(a), bad(b)])
+    assert (o.close, o.close_button, o.title) == (False, True, "Reset 1 of 2, 1 failed")
+    assert o.body == "The other folders have their normal icon again." and o.details == "~/B: fake failure"
+    o = reset_outcome(results=[bad(a), bad(b)])
+    assert (o.close, o.close_button, o.body) == (False, False, "No folder was changed.")
+    assert reset_outcome(error=ManifestError("damaged")) == Outcome(False, "Nothing was reset", "damaged")
+
+
+def test_reset_record_error_says_the_icons_were_reset_but_not_recorded():
+    a, b = home("A", "B")
+    o = reset_outcome(error=RecordError([ok(a), bad(b)], OSError(28, "No space left on device")))
+    assert o.title == "Icons reset, but not recorded" and not o.close and not o.close_button
+    assert "reset on 1 of 2 folders" in o.body and "No space left on device" in o.body
+    assert "still shows them, as 'no icon'" in o.body and o.details == "~/B: fake failure"
+
+
+def test_reset_unexpected_error():
+    o = reset_outcome(error=RuntimeError("boom"))
+    assert o.title == "Something went wrong" and "RuntimeError: boom" in o.body and "normal icon again" in o.body
+
+
+def test_apply_texts_are_unchanged_by_the_reset_wording():
+    a, b = home("A", "B")
+    assert apply_outcome(results=[ok(a), bad(b)]).title == "Applied to 1 of 2, 1 failed"
+    assert apply_outcome(error=ApplyError("x")).title == "Nothing was applied"
+    assert "not recorded" in apply_outcome(error=RecordError([ok(a)], OSError("x"))).title
+
+
+@pytest.mark.parametrize("n_dirs, n_recorded, running, expected", [
+    (0, 0, False, ("Reset", False, "No folder selected")),
+    (1, 1, False, ("Reset", True, "Give the folder its normal icon again")),
+    (1, 0, False, ("Reset", False, "This folder has no icon from Folder Symbols")),
+    (5, 5, False, ("Reset 5", True, "Give the 5 selected folders their normal icon again")),
+    (5, 3, False, ("Reset 3 of 5", True,
+                   "Give the 3 folders with an icon from Folder Symbols their normal icon again")),
+    (5, 1, False, ("Reset 1 of 5", True,
+                   "Give the one folder with an icon from Folder Symbols its normal icon again")),
+    (5, 0, False, ("Reset", False, "None of the selected folders has an icon from Folder Symbols")),
+    (5, 3, True, ("Reset 3 of 5", False, "Working…")),
+    (1, 1, True, ("Reset", False, "Working…")),
+])
+def test_reset_button_state(n_dirs, n_recorded, running, expected):
+    assert reset_button_state(n_dirs, n_recorded, running) == expected
+
+
+def test_reset_confirmation(tmp_path):
+    a, b = home("A", "My Files")
+    heading, body, details = reset_confirmation([a, b, str(tmp_path / "X")])
+    assert heading == "Reset the icons of 3 folders?" and "normal folder icon" in body
+    assert details.splitlines() == ["~/A", "~/My Files", str(tmp_path / "X")]

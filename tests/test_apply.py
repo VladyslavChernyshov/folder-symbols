@@ -5,7 +5,7 @@ import json, os, subprocess, sys
 import pytest
 
 from folder_symbols import apply as ap, cli, store, yaru
-from folder_symbols.apply import ApplyError, FolderResult, apply_folders
+from folder_symbols.apply import NOT_FOUND, ApplyError, FolderResult, apply_folders, reset_folders
 from folder_symbols.preview import PreviewSession
 from folder_symbols.store import ManifestError, Recipe
 
@@ -349,3 +349,85 @@ def test_an_os_error_before_anything_is_set_stays_an_os_error(isolated_home, sym
         apply_folders([d], "sq", "sage", dark=False, symbols_dir=symbols_dir,
                       manifest_path=str(blocked / "manifest.json"), set_icon=setter)
     assert not isinstance(e.value, ap.RecordError) and setter.calls == []
+
+
+# ------------------------------------------------------------- reset_folders
+
+class Unsetter(Setter):
+    def __call__(self, folder):
+        super().__call__(folder, None)
+
+
+def recorded_in(isolated_home, *names):
+    dirs = folders(isolated_home, *names)
+    for d in dirs:
+        store.record(d, Recipe("sq", "system"))
+    return dirs
+
+
+def test_reset_removes_only_the_entries_of_folders_that_were_reset(isolated_home):
+    a, b, c = recorded_in(isolated_home, "A", "B", "C")
+    unset = Unsetter(b)
+    results = reset_folders([a, b, c], unset_icon=unset)
+    assert [(r.folder, r.ok, r.message) for r in results] == [(a, True, "icon reset"),
+                                                              (b, False, f"fake failure on {b}"),
+                                                              (c, True, "icon reset")]
+    assert [c_[0] for c_ in unset.calls] == [a, b, c]
+    assert [e.folder for e in store.entries()] == [b]
+
+
+def test_reset_of_a_missing_folder_fails_and_keeps_its_entry(isolated_home):
+    a, gone = recorded_in(isolated_home, "A", "Gone")
+    os.rmdir(gone)
+    unset = Unsetter()
+    results = reset_folders([gone, a], unset_icon=unset)
+    assert [(r.ok, r.message) for r in results] == [(False, NOT_FOUND), (True, "icon reset")]
+    assert [c[0] for c in unset.calls] == [a] and [e.folder for e in store.entries()] == [gone]
+
+
+@pytest.mark.parametrize("fail, saves", [(False, 1), (True, 0)])
+def test_reset_saves_the_manifest_once_or_not_at_all(isolated_home, monkeypatch, fail, saves):
+    dirs = recorded_in(isolated_home, "A", "B", "C")
+    calls, real = [], store.Manifest.save
+    monkeypatch.setattr(store.Manifest, "save", lambda self: (calls.append(1), real(self)))
+    reset_folders(dirs, unset_icon=Unsetter(*(dirs if fail else ())))
+    assert len(calls) == saves
+
+
+@pytest.mark.parametrize("text, match", [("{oops", "damaged"),
+                                         (json.dumps({"schema_version": 99, "folders": []}), "newer")])
+def test_reset_with_a_damaged_or_newer_manifest_touches_nothing(isolated_home, text, match):
+    [d] = folders(isolated_home, "A")
+    os.makedirs(store.data_dir())
+    with open(store.manifest_path(), "w", encoding="utf-8") as f:
+        f.write(text)
+    unset = Unsetter()
+    with pytest.raises(ManifestError, match=match):
+        reset_folders([d], unset_icon=unset)
+    assert unset.calls == [] and read(store.manifest_path()).decode() == text
+
+
+def test_reset_save_failure_is_a_record_error(isolated_home, monkeypatch):
+    a, b = recorded_in(isolated_home, "A", "B")
+    monkeypatch.setattr(store.Manifest, "save", lambda self: (_ for _ in ()).throw(OSError(28, "No space")))
+    with pytest.raises(ap.RecordError) as e:
+        reset_folders([a, b], unset_icon=Unsetter())
+    assert [r.ok for r in e.value.results] == [True, True] and "No space" in str(e.value.error)
+    assert len(store.entries()) == 2                               # the old manifest is still there
+
+
+def test_reset_drops_duplicates_and_uses_gio_unset_by_default(isolated_home, monkeypatch):
+    [a] = recorded_in(isolated_home, "A")
+    unset = Unsetter()
+    monkeypatch.setattr(ap, "gio_unset", unset)                    # looked up at call time
+    assert [r.folder for r in reset_folders([a, a + "/", "~/A"])] == [a]
+    assert [c[0] for c in unset.calls] == [a]
+    assert reset_folders([]) == []
+
+
+def test_reset_of_a_folder_without_an_entry_still_unsets_it(isolated_home):
+    """reset_folders does not filter; the window passes only the folders with an entry."""
+    [d] = folders(isolated_home, "A")
+    unset = Unsetter()
+    assert [r.ok for r in reset_folders([d], unset_icon=unset)] == [True] and unset.calls
+    assert not os.path.exists(store.manifest_path())               # nothing changed, nothing saved

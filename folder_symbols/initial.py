@@ -71,3 +71,12 @@ def initial_state(dirs, manifest, symbols, symbols_dir=None):
     return InitialState(symbol=symbols_found.pop() if len(symbols_found) == 1 else None,
                         accent=accents.pop() if len(accents) == 1 else None,
                         message=message)
+
+
+def recorded_folders(dirs, manifest):
+    """The folders of dirs (normalised, as for initial_state) that have a usable manifest entry, in the
+    order of dirs: the ones the window's Reset acts on. manifest None (damaged or unreadable) gives []."""
+    if manifest is None:
+        return []
+    recorded = {e.folder for e in manifest.entries()}
+    return [d for d in dirs if d in recorded]

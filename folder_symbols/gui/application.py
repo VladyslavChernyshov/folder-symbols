@@ -4,7 +4,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib
 
-from folder_symbols.apply import apply_folders
+from folder_symbols.apply import apply_folders, reset_folders
 from folder_symbols.preview import PreviewSession
 from folder_symbols.selection import normalise_paths
 from folder_symbols.gui.window import APP_TITLE, FolderSymbolsWindow
@@ -13,8 +13,9 @@ APP_ID = "io.github.VladyslavChernyshov.FolderSymbols"
 
 
 class FolderSymbolsApplication(Adw.Application):
-    def __init__(self, apply_func=apply_folders):
-        """apply_func: what the window's Apply calls, apply.apply_folders by default (a stub in self-checks)."""
+    def __init__(self, apply_func=apply_folders, reset_func=reset_folders):
+        """apply_func, reset_func: what the window's Apply and Reset call, apply.apply_folders and
+        apply.reset_folders by default (stubs in self-checks)."""
         super().__init__(
             application_id=APP_ID,
             flags=Gio.ApplicationFlags.HANDLES_OPEN,
@@ -22,7 +23,7 @@ class FolderSymbolsApplication(Adw.Application):
         GLib.set_application_name(APP_TITLE)
         self._window = None
         self._preview_session = None
-        self._apply_func = apply_func
+        self._apply_func, self._reset_func = apply_func, reset_func
 
     def do_startup(self):
         Adw.Application.do_startup(self)
@@ -36,7 +37,7 @@ class FolderSymbolsApplication(Adw.Application):
     def do_activate(self):
         if self._window is None:
             self._window = FolderSymbolsWindow(application=self, preview_session=self._preview_session,
-                                               apply_func=self._apply_func)
+                                               apply_func=self._apply_func, reset_func=self._reset_func)
         self._window.present()
 
     def do_open(self, files, n_files, hint):
