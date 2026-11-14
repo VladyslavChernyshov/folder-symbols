@@ -322,3 +322,30 @@ def test_system_is_not_a_concrete_accent_to_build_with(isolated_home, symbols_di
         apply_folders([d], "sq", SYSTEM, dark=False, symbols_dir=symbols_dir, system_accent="nosuch",
                       set_icon=Setter())
     assert icon_files() == []
+
+
+# ------------------------------------------------------------- a manifest that cannot be saved
+def test_a_save_failure_after_gio_is_a_record_error_with_the_results(isolated_home, symbols_dir, monkeypatch):
+    a, b = folders(isolated_home, "A", "B")
+
+    def broken_save(self):
+        raise PermissionError(13, "Permission denied")
+    monkeypatch.setattr(store.Manifest, "save", broken_save)
+    setter = Setter(b)
+    with pytest.raises(ap.RecordError) as e:
+        apply_folders([a, b], "sq", "sage", dark=False, symbols_dir=symbols_dir, set_icon=setter)
+    assert [c[0] for c in setter.calls] == [a, b]                 # the icons were set
+    assert [(r.folder, r.ok) for r in e.value.results] == [(a, True), (b, False)]
+    assert isinstance(e.value.error, PermissionError) and "could not be saved" in str(e.value)
+    assert not os.path.exists(store.manifest_path())
+
+
+def test_an_os_error_before_anything_is_set_stays_an_os_error(isolated_home, symbols_dir, tmp_path):
+    [d] = folders(isolated_home, "A")
+    blocked = tmp_path / "blocked"
+    blocked.write_text("")                                         # the manifest's directory is a file
+    setter = Setter()
+    with pytest.raises(OSError) as e:
+        apply_folders([d], "sq", "sage", dark=False, symbols_dir=symbols_dir,
+                      manifest_path=str(blocked / "manifest.json"), set_icon=setter)
+    assert not isinstance(e.value, ap.RecordError) and setter.calls == []

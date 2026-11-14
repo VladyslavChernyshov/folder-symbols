@@ -15,6 +15,7 @@ PREVIEW_BOX_HEIGHT = 190                 # outer height, border included (mockup
 PREVIEW_BOX_BORDER = 1
 PREVIEW_BOX_RADIUS = 12
 PREVIEW_ICON_SIZE = 150
+BUTTON_GAP = 10                          # mockup .btns gap
 
 # Only named theme colours. The panel has no background of its own: it sits in the split view's sidebar,
 # which draws the sidebar colour and the border to the gallery. The preview box uses the same tokens as
@@ -65,6 +66,11 @@ class PreviewPanel(Gtk.Box):
         self._picker.connect("picked", lambda _p, accent: self._update(pick(self._choice, accent)))
         self._picker.connect("follow-toggled", lambda _p, on: self._update(set_follow(self._choice, on)))
         self.append(self._picker)
+        # The buttons at the bottom right (mock7 .btns): Apply, the suggested action; Reset goes to its left.
+        buttons = Gtk.Box(spacing=BUTTON_GAP, halign=Gtk.Align.END, valign=Gtk.Align.END, vexpand=True)
+        self.apply_button = Gtk.Button(label="Apply", css_classes=["suggested-action"], sensitive=False)
+        buttons.append(self.apply_button)
+        self.append(buttons)
         self.set_initial_accent(None)
         # Follow the system style while the window is open: a new accent on Ubuntu is a new icon theme.
         Adw.StyleManager.get_default().connect("notify::dark", lambda *_: self._show())

@@ -73,6 +73,15 @@ class ApplyError(Exception):
     """An apply that cannot go ahead for any folder (symbol not found, unknown accent, icon not built)."""
 
 
+class RecordError(Exception):
+    """apply_folders set the icons (results: the FolderResults) but could not save the manifest (error:
+    the OSError), so the folders that got their icon are not recorded."""
+
+    def __init__(self, results, error):
+        super().__init__(f"the manifest could not be saved: {error}")
+        self.results, self.error = results, error
+
+
 @dataclasses.dataclass(frozen=True)
 class FolderResult:
     folder: str          # absolute path
@@ -215,7 +224,8 @@ def apply_folders(dirs, symbol, accent, *, dark, symbols_dir, system_accent=None
 
     Returns one FolderResult per folder (duplicates dropped, order kept). Raises store.ManifestError
     (manifest damaged or newer) or ApplyError (unknown accent or symbol, no system accent to follow,
-    icon not built) before any folder is changed."""
+    icon not built) before any folder is changed, and RecordError when the icons were set but the
+    manifest could not be saved afterwards. Other OSErrors (e.g. the lock file) come before anything is set."""
     seen, folders = set(), []
     for d in map(store.folder_path, dirs):
         if d not in seen:
@@ -223,26 +233,33 @@ def apply_folders(dirs, symbol, accent, *, dark, symbols_dir, system_accent=None
             folders.append(d)
     if not folders:
         return []
-    with store.editing(manifest_path) as m:
-        m.check_writable()
-        build_accent = accent
-        if accent == SYSTEM_ACCENT:
-            build_accent = system_accent or accents.system_accent()
-            if build_accent is None:
-                raise ApplyError("the current icon theme is not a Yaru variant (or cannot be read), so there "
-                                 "is no system accent to follow; choose an accent")
-        try:
-            theme_name = yaru.variant_name(build_accent, dark)
-        except ValueError as e:
-            raise ApplyError(str(e)) from None
-        svg = lookup_symbol(symbol, symbols_dir)
-        recipe = Recipe(recipe_symbol(symbol, svg, symbols_dir), accent)
-        try:
-            ov = load_overrides().get(symbol_name(svg), {})
-            icon = write_icon(theme_ref(theme_name), theme_name, svg, store_dir or store.icons_dir(), ov)
-        except (OSError, subprocess.SubprocessError, ValueError) as e:
-            raise ApplyError(f"cannot build the icon for {svg}: {e}") from e
-        return set_folder_icons(m, folders, icon, recipe, set_icon)
+    results = None                   # set once the icons are set: an OSError after that is the save's
+    try:
+        with store.editing(manifest_path) as m:
+            m.check_writable()
+            build_accent = accent
+            if accent == SYSTEM_ACCENT:
+                build_accent = system_accent or accents.system_accent()
+                if build_accent is None:
+                    raise ApplyError("the current icon theme is not a Yaru variant (or cannot be read), so "
+                                     "there is no system accent to follow; choose an accent")
+            try:
+                theme_name = yaru.variant_name(build_accent, dark)
+            except ValueError as e:
+                raise ApplyError(str(e)) from None
+            svg = lookup_symbol(symbol, symbols_dir)
+            recipe = Recipe(recipe_symbol(symbol, svg, symbols_dir), accent)
+            try:
+                ov = load_overrides().get(symbol_name(svg), {})
+                icon = write_icon(theme_ref(theme_name), theme_name, svg, store_dir or store.icons_dir(), ov)
+            except (OSError, subprocess.SubprocessError, ValueError) as e:
+                raise ApplyError(f"cannot build the icon for {svg}: {e}") from e
+            results = set_folder_icons(m, folders, icon, recipe, set_icon)
+    except OSError as e:
+        if results is None:
+            raise
+        raise RecordError(results, e) from e
+    return results
 
 
 def apply(a):

@@ -101,8 +101,7 @@ class AccentPicker(Gtk.Box):
         self._follow_row = Gtk.Box(spacing=6, margin_top=LEGEND_MARGIN_TOP)
         self._marker = Gtk.Box(css_classes=["accent-legend-dot"], valign=Gtk.Align.CENTER, visible=False)
         self._follow_row.append(self._marker)
-        self._follow_row.append(Gtk.Label(label=FOLLOW_LABEL, xalign=0, hexpand=True,
-                                          css_classes=["caption", "dim-label"]))
+        self._follow_row.append(Gtk.Label(label=FOLLOW_LABEL, xalign=0, hexpand=True))
         self._switch = Gtk.Switch(valign=Gtk.Align.CENTER)
         self._switch.update_property([Gtk.AccessibleProperty.LABEL], [FOLLOW_LABEL])
         self._switch.connect("notify::active", self._on_switch)
