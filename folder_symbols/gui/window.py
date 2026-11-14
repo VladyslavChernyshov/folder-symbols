@@ -4,20 +4,22 @@ import os
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GObject
+from gi.repository import Adw, GObject, Gtk
 
 from folder_symbols.gallery import list_symbols
 from folder_symbols.selection import subtitle_text, tooltip_text
 from folder_symbols.symbols import default_symbols_dir
 from folder_symbols.gui.gallery import SymbolGallery
+from folder_symbols.gui.preview import PreviewPanel
 
 
 class FolderSymbolsWindow(Adw.ApplicationWindow):
     # The gallery.Symbol selected in the gallery, or None.
     selected_symbol = GObject.Property(type=GObject.TYPE_PYOBJECT, nick="selected-symbol")
 
-    def __init__(self, **kwargs):
+    def __init__(self, preview_session, **kwargs):
         super().__init__(**kwargs)
+        self._preview_session = preview_session
         self.set_default_size(900, 600)
 
         self._title_widget = Adw.WindowTitle(
@@ -34,7 +36,9 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         self.set_content(view)
 
     def _build_body(self, symbols_dir):
-        """The symbol gallery, or a status page when symbols_dir has no symbols."""
+        """The symbol gallery with the preview panel on its right, or a status page when symbols_dir has
+        no symbols. The search row and its scroll divider belong to the gallery, so they span only the
+        gallery column; the panel runs the full height under the header bar."""
         if not os.path.isdir(symbols_dir):
             return self._no_symbols(f"Folder does not exist: {symbols_dir}")
         try:
@@ -45,7 +49,14 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
             return self._no_symbols(f"No *-symbolic.svg files in {symbols_dir}")
         gallery = SymbolGallery(symbols)
         gallery.bind_property("selected-symbol", self, "selected-symbol", GObject.BindingFlags.SYNC_CREATE)
-        return gallery
+        panel = PreviewPanel(self._preview_session)
+        self.connect("notify::selected-symbol", lambda *_: panel.set_symbol(self.selected_symbol))
+        body = Gtk.Box()
+        gallery.set_hexpand(True)
+        body.append(gallery)
+        body.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        body.append(panel)
+        return body
 
     @staticmethod
     def _no_symbols(reason):

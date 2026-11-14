@@ -342,6 +342,25 @@ def test_apply_svg_by_name_dry_run(tmp_path, svg):
     assert (tmp_path / "s" / "Yaru-purple-dark-sq.svg").exists()
 
 
+@pytest.mark.parametrize("extra, args", [
+    (["--overrides", "OV", "--scale", "0.9", "--keep-opacity"], (0.9 * 0.7, "yaru", 0.01, -0.02, False)),
+    (["--overrides", "OV", "--no-overrides", "--scale", "0.9"], (0.9, "bbox", 0.0, 0.0, True)),
+    (["--overrides", "OV", "--align", "bbox"], (0.7, "yaru", 0.01, -0.02, True)),
+])
+def test_apply_svg_is_make_svg_with_overrides_mapped(g, tmp_path, svg, extra, args):
+    """apply writes exactly make_svg() with the symbol's overrides applied (shared with the GUI preview
+    through make_svg_for), so a refactor of that mapping cannot change apply's output."""
+    p = svg("sq", SQUARE, 'viewBox="0 0 16 16"')
+    ov = tmp_path / "ov.json"
+    ov.write_text(json.dumps({"sq": {"scale": 0.7, "align": "yaru", "dx": 0.01, "dy": -0.02}}))
+    store = tmp_path / "s"
+    r = _run("apply", str(tmp_path), p, "--theme", "Yaru-dark", "--store", str(store), "--dry-run",
+             *[str(ov) if a == "OV" else a for a in extra])
+    assert r.returncode == 0, r.stderr
+    [out] = store.iterdir()
+    assert out.read_text(encoding="utf-8") == g.make_svg("Yaru-dark", p, *args)
+
+
 # ------------------------------------------------------------- fake README screenshot
 def test_make_screenshot(tmp_path):
     sys.path.insert(0, os.path.join(ROOT, "tools"))

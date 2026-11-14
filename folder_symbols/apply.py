@@ -4,7 +4,7 @@ import contextlib, hashlib, json, os, re, shlex, subprocess, sys
 
 from . import store, yaru
 from .store import Recipe
-from .svg import make_svg
+from .svg import make_svg_for
 from .symbols import YARU_SYMBOLS, find_symbols, load_overrides
 from .yaru import Theme, builtin_themes, compose, find_theme_dir, render_symbol
 
@@ -143,8 +143,7 @@ def apply(a):
         if a.format == "svg":
             png = os.path.join(store_dir, base + ".svg")
             with open(png, "w", encoding="utf-8") as f:
-                f.write(make_svg(theme_dir, svg, a.scale * ov.get("scale", 1.0), ov.get("align", a.align),
-                                 ov.get("dx", 0.0), ov.get("dy", 0.0), not a.keep_opacity))
+                f.write(make_svg_for(theme_dir, svg, ov, a.scale, a.align, a.keep_opacity))
         else:
             png = os.path.join(store_dir, base + ".png")
             theme = Theme(theme_dir, (a.size,))

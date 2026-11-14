@@ -63,3 +63,11 @@ def make_svg(theme_ref, symbol_svg, scale=1.0, align="bbox", dx=0.0, dy=0.0, sol
     if data["colors"]:
         text = text.replace(DUMMY_ACCENT, data["colors"][0]).replace(DUMMY_DARK, data["colors"][1])
     return text.replace("<!--SYMBOL-DEFS-->", defs).replace("<!--SYMBOL-LAYERS-->", layers)
+
+
+def make_svg_for(theme_ref, symbol_svg, overrides, scale=1.0, align="bbox", keep_opacity=False):
+    """make_svg with the symbol's overrides.json entry applied (overrides: that entry as a dict, {} for
+    none): its scale multiplies `scale`, its align/dx/dy win over `align` and the defaults."""
+    ov = overrides
+    return make_svg(theme_ref, symbol_svg, scale * ov.get("scale", 1.0), ov.get("align", align),
+                    ov.get("dx", 0.0), ov.get("dy", 0.0), not keep_opacity)
