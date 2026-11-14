@@ -4,7 +4,7 @@ import os, subprocess, tempfile
 
 from . import yaru
 from .svg import make_svg_for
-from .symbols import load_overrides
+from .symbols import load_overrides, symbol_name
 
 
 class PreviewError(Exception):
@@ -29,9 +29,12 @@ def system_variant(dark):
     return resolve_variant(current, dark)
 
 
-def _symbol_name(symbol_svg):
-    base = os.path.basename(symbol_svg)
-    return base[:-len("-symbolic.svg")] if base.endswith("-symbolic.svg") else os.path.splitext(base)[0]
+def variant_for(accent, dark):
+    """The built-in variant to preview with: the given accent (e.g. a folder's recorded one) in the given
+    light/dark style when it is a known Yaru accent, else system_variant(dark)."""
+    if accent in yaru.accents():
+        return yaru.variant_name(accent, dark)
+    return system_variant(dark)
 
 
 class PreviewSession:
@@ -54,7 +57,7 @@ class PreviewSession:
                 self._overrides = load_overrides()
             except (OSError, ValueError) as e:
                 raise PreviewError(f"cannot read overrides: {e}") from e
-        name = _symbol_name(symbol_svg)
+        name = symbol_name(symbol_svg)
         path = os.path.join(self.dir, f"{variant}-{name}.svg")
         try:
             text = make_svg_for(variant, symbol_svg, self._overrides.get(name, {}))

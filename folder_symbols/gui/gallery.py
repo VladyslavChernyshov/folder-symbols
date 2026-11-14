@@ -2,7 +2,7 @@
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GObject, Gtk, Pango
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
 
 from folder_symbols.gallery import matches
 
@@ -89,6 +89,8 @@ class SymbolGallery(Gtk.Box):
         _load_css()
         self._query = ""
         self._category = None
+        self._pending_scroll = None              # position to scroll to once the grid has its size
+        self._scroll_tick = None
 
         store = Gio.ListStore(item_type=SymbolItem)
         store.splice(0, 0, [SymbolItem(s) for s in symbols])
@@ -102,7 +104,7 @@ class SymbolGallery(Gtk.Box):
         factory = Gtk.SignalListItemFactory()
         factory.connect("setup", self._on_setup)
         factory.connect("bind", self._on_bind)
-        grid = Gtk.GridView(model=self._selection, factory=factory, min_columns=2, max_columns=12,
+        self._grid = grid = Gtk.GridView(model=self._selection, factory=factory, min_columns=2, max_columns=12,
                             css_classes=["symbol-gallery"])
         # No margins here: the insets are the grid's CSS padding. The overlay scrollbar floats over the
         # padding, so it neither moves cells nor changes the number of columns.
@@ -118,6 +120,31 @@ class SymbolGallery(Gtk.Box):
         self._stack.add_named(scroller, "grid")
         self._stack.add_named(empty, "empty")
         self.append(self._stack)
+
+    def select_symbol(self, symbol):
+        """Select symbol (a gallery.Symbol, or None for no selection) as if it had been clicked, and scroll
+        it into view (or to the top for None). A symbol that the current filter hides is not selected.
+        Keyboard focus does not move."""
+        position = next((i for i, item in enumerate(self._filtered) if item.symbol == symbol),
+                        Gtk.INVALID_LIST_POSITION) if symbol is not None else Gtk.INVALID_LIST_POSITION
+        self._selection.set_selected(position)
+        self._scroll_to(position if position != Gtk.INVALID_LIST_POSITION else 0)
+
+    def _scroll_to(self, position):
+        """Scroll position into view on the next frame in which the grid has a size. Gtk.GridView.scroll_to
+        called before the grid's first allocation (the window is opened with a selection) leaves the view
+        at the top and the grid half drawn, so it waits for a tick callback."""
+        self._pending_scroll = position
+        if self._scroll_tick is None:
+            self._scroll_tick = self._grid.add_tick_callback(self._on_scroll_tick)
+
+    def _on_scroll_tick(self, grid, _clock):
+        if grid.get_height() <= 0:
+            return GLib.SOURCE_CONTINUE
+        self._scroll_tick = None
+        if self._pending_scroll < self._filtered.get_n_items():
+            grid.scroll_to(self._pending_scroll, Gtk.ListScrollFlags.NONE, None)     # GTK 4.12
+        return GLib.SOURCE_REMOVE
 
     def set_filter(self, query, category):
         """Show the symbols whose name contains query and, unless category is None, of that category."""

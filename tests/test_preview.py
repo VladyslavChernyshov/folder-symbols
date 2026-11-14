@@ -6,9 +6,9 @@ import pytest
 
 from conftest import SYMBOLS_DIR
 from folder_symbols import preview, yaru
-from folder_symbols.preview import PreviewError, PreviewSession, resolve_variant, system_variant
+from folder_symbols.preview import PreviewError, PreviewSession, resolve_variant, system_variant, variant_for
 from folder_symbols.svg import make_svg
-from folder_symbols.symbols import find_symbols, load_overrides
+from folder_symbols.symbols import find_symbols, load_overrides, symbol_name
 
 SQUARE = '<rect x="3" y="3" width="10" height="10" fill="#222"/>'
 
@@ -54,6 +54,29 @@ def test_system_variant_uses_the_current_icon_theme(monkeypatch):
     assert system_variant(dark=True) == "Yaru-blue"
     monkeypatch.setattr(yaru, "current_icon_theme", lambda: "Adwaita")
     assert system_variant(dark=True) == "Yaru-dark"
+
+
+@pytest.mark.parametrize("accent, dark, expected", [
+    ("purple", False, "Yaru-purple"), ("purple", True, "Yaru-purple-dark"),
+    ("orange", False, "Yaru"), ("orange", True, "Yaru-dark"), ("mate", True, "Yaru-mate-dark"),
+])
+def test_variant_for_a_recorded_accent(accent, dark, expected):
+    assert variant_for(accent, dark) == expected
+
+
+@pytest.mark.parametrize("accent", [None, "", "nosuch"])
+def test_variant_for_no_or_unknown_accent_is_the_system_variant(monkeypatch, accent):
+    # conftest's gsettings stub fails, so the system variant is plain Yaru in the given style
+    assert variant_for(accent, True) == "Yaru-dark"
+    monkeypatch.setattr(yaru, "current_icon_theme", lambda: "Yaru-blue")
+    assert variant_for(accent, False) == "Yaru-blue"
+
+
+@pytest.mark.parametrize("path, name", [
+    ("/x/apps/community-symbolic.svg", "community"), ("/x/logo.svg", "logo"), ("rel/a-b-symbolic.svg", "a-b"),
+])
+def test_symbol_name(path, name):
+    assert symbol_name(path) == name
 
 
 # ------------------------------------------------------------- building

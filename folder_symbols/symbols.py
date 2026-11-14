@@ -5,6 +5,12 @@ YARU_SYMBOLS = "/usr/share/icons/Yaru/scalable"   # where symbol names are looke
 OVERRIDES_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "overrides.json")
 
 
+def symbol_name(symbol_svg):
+    """The name of a symbol file: 'community' for .../community-symbolic.svg, the stem for other files."""
+    base = os.path.basename(symbol_svg)
+    return base[:-len("-symbolic.svg")] if base.endswith("-symbolic.svg") else os.path.splitext(base)[0]
+
+
 def default_symbols_dir():
     """The symbols directory for the GUI: $YARU_SYMBOLS_DIR if set, else YARU_SYMBOLS."""
     return os.environ.get("YARU_SYMBOLS_DIR") or YARU_SYMBOLS

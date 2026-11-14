@@ -29,7 +29,7 @@ def normalise_paths(paths):
     return dirs, ignored
 
 
-def _tilde(path):
+def tilde(path):
     """Format an absolute path replacing $HOME with ~."""
     home = os.path.expanduser("~")
     if path == home:
@@ -57,7 +57,7 @@ def panel_tooltip(dirs, total):
 
     total – len(dirs) + ignored_count  (duplicates do not contribute to total)
     """
-    lines = [_tilde(d) for d in dirs]
+    lines = [tilde(d) for d in dirs]
     if total > len(dirs):
         lines.insert(0, f"{len(dirs)} of {total} selected items are folders")
     return "\n".join(lines)

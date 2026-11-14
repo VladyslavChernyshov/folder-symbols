@@ -6,7 +6,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, Gtk
 
-from folder_symbols.preview import PreviewError, system_variant
+from folder_symbols.preview import PreviewError, variant_for
 
 PANEL_PADDING = (6, 18, 18, 18)          # top right bottom left (mockup .side, under the sidebar header)
 PREVIEW_BOX_HEIGHT = 190                 # outer height, border included (mockup .prevbox, border-box)
@@ -49,6 +49,7 @@ class PreviewPanel(Gtk.Box):
         _load_css()
         self._session = session
         self._symbol = None
+        self._accent = None
         # hexpand centres the image along the box; vexpand would propagate and stretch the box downwards.
         self._image = Gtk.Image(pixel_size=PREVIEW_ICON_SIZE, hexpand=True,
                                 halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
@@ -60,6 +61,13 @@ class PreviewPanel(Gtk.Box):
         Adw.StyleManager.get_default().connect("notify::dark", lambda *_: self._show())
         Gtk.Settings.get_default().connect("notify::gtk-icon-theme-name", lambda *_: self._show())
 
+    def set_accent(self, accent):
+        """accent: the accent to preview with (e.g. the folders' recorded one), or None for the system's.
+        The light/dark style always follows the system."""
+        if accent != self._accent:
+            self._accent = accent
+            self._show()
+
     def set_symbol(self, symbol):
         """symbol: a gallery.Symbol, or None."""
         self._symbol = symbol
@@ -68,7 +76,7 @@ class PreviewPanel(Gtk.Box):
     def _show(self):
         if self._symbol is not None:
             try:
-                variant = system_variant(Adw.StyleManager.get_default().get_dark())
+                variant = variant_for(self._accent, Adw.StyleManager.get_default().get_dark())
                 path = self._session.build(self._symbol.path, variant)
             except PreviewError as e:
                 print(f"folder-symbols: {e}", file=sys.stderr)

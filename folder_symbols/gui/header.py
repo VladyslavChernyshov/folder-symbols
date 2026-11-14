@@ -69,6 +69,14 @@ class GalleryHeader(Adw.Bin):
         self.set_child(header)
         self._update()
 
+    def reset_filter(self):
+        """Clear the search and show all categories. query is set directly, so listeners see the change
+        now rather than after the search entry's typing delay."""
+        self.search.set_text("")
+        if self.query:
+            self.query = ""
+        self._set_category("")
+
     @staticmethod
     def _category_menu(names):
         """A native menu, as in Nautilus' view menu: "All categories", then the categories in a second
