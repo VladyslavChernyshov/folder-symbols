@@ -1,11 +1,11 @@
 """Setting and removing a folder's custom icon in Nautilus (gio metadata::custom-icon), and keeping
 the manifest of those folders (store.py) up to date."""
-import contextlib, hashlib, json, os, re, shlex, subprocess, sys
+import contextlib, dataclasses, hashlib, json, os, re, shlex, subprocess, sys
 
 from . import store, yaru
 from .store import Recipe
 from .svg import make_svg_for
-from .symbols import YARU_SYMBOLS, find_symbols, load_overrides
+from .symbols import YARU_SYMBOLS, find_symbols, load_overrides, symbol_name
 from .yaru import Theme, builtin_themes, compose, find_theme_dir, render_symbol
 
 
@@ -69,13 +69,39 @@ def _warn(manifest):
 
 
 # ---------------------------------------------------------------- apply
-def find_symbol(symbol, symbols_dir):
+class ApplyError(Exception):
+    """An apply that cannot go ahead for any folder (symbol not found, unknown accent, icon not built)."""
+
+
+@dataclasses.dataclass(frozen=True)
+class FolderResult:
+    folder: str          # absolute path
+    ok: bool
+    message: str         # "icon set", or why it was not
+
+
+def lookup_symbol(symbol, symbols_dir):
+    """The file of a symbol given as a path to an existing .svg or as a name looked up in symbols_dir."""
     if symbol.endswith(".svg") and os.path.exists(symbol):
         return symbol
     hit = find_symbols(symbols_dir, None).get(re.sub(r"-symbolic(\.svg)?$", "", symbol))
     if not hit:
-        sys.exit(f"symbol '{symbol}' not found in {symbols_dir} (try: ls {symbols_dir}/*/ | grep -i word)")
+        raise ApplyError(f"symbol '{symbol}' not found in {symbols_dir} (try: ls {symbols_dir}/*/ | grep -i word)")
     return hit
+
+
+def find_symbol(symbol, symbols_dir):
+    try:
+        return lookup_symbol(symbol, symbols_dir)
+    except ApplyError as e:
+        sys.exit(str(e))
+
+
+def recipe_symbol(symbol, svg, symbols_dir):
+    """The symbol as the recipe keeps it: its name when it was looked up by name in Yaru's own tree,
+    else the absolute path of its file (a path was given, or a non-default symbols directory)."""
+    by_name = svg != symbol and symbols_dir == YARU_SYMBOLS
+    return symbol_name(svg) if by_name else os.path.abspath(svg)
 
 
 def resolve_theme(a):
@@ -100,6 +126,15 @@ def resolve_theme(a):
     return current, v[0]
 
 
+def theme_ref(theme_name, fmt="svg", icons_root=None):
+    """What to build the icon from: the built-in data of a Yaru variant for SVG (no installed theme
+    needed), else the theme directory found in icons_root, ~/.local/share/icons or /usr/share/icons."""
+    if fmt == "svg" and not icons_root and theme_name in builtin_themes():
+        return theme_name
+    roots = ([icons_root] if icons_root else []) + ["~/.local/share/icons", "/usr/share/icons"]
+    return find_theme_dir(theme_name, roots)
+
+
 def _not_in_recipe(a):
     """apply options that change the icon but are not part of the recipe."""
     return [opt for opt, used in (("--format png", a.format == "png"), ("--size", a.size != "512"),
@@ -108,16 +143,96 @@ def _not_in_recipe(a):
                                   ("--icons-root", a.icons_root is not None)) if used]
 
 
-def _file_suffix(a, name, ov):
+def icon_suffix(name, ov, scale=1.0, align="bbox", keep_opacity=False, png_size=None):
     """'' for an icon built with default options (the name stays {theme}-{symbol}), else a short hash
-    of the options, so folders with the same symbol but e.g. another --scale do not share one file."""
-    opts = {"scale": a.scale, "align": a.align, "keep_opacity": a.keep_opacity, "overrides": ov,
-            "size": a.size if a.format == "png" else None}
-    default = {"scale": 1.0, "align": "bbox", "keep_opacity": False, "size": "512" if a.format == "png" else None,
+    of the options, so folders with the same symbol but e.g. another --scale do not share one file.
+    png_size: the size of a PNG icon, None for SVG."""
+    opts = {"scale": scale, "align": align, "keep_opacity": keep_opacity, "overrides": ov, "size": png_size}
+    default = {"scale": 1.0, "align": "bbox", "keep_opacity": False, "size": None if png_size is None else "512",
                "overrides": load_overrides().get(name, {})}
     if opts == default:
         return ""
     return "-" + hashlib.sha1(json.dumps(opts, sort_keys=True).encode()).hexdigest()[:8]
+
+
+def write_icon(theme_dir, theme_name, svg, store_dir, ov, scale=1.0, align="bbox", keep_opacity=False,
+               fmt="svg", size="512"):
+    """Build the icon into store_dir as {theme_name}-{symbol}{icon_suffix}.svg (or .png) and return its
+    path. theme_dir: from theme_ref(); ov: the symbol's overrides entry ({} for none)."""
+    name = symbol_name(svg)
+    suffix = icon_suffix(name, ov, scale, align, keep_opacity, size if fmt == "png" else None)
+    base = f"{theme_name}-{name}{suffix}"
+    os.makedirs(store_dir, exist_ok=True)
+    if fmt == "svg":
+        path = os.path.join(store_dir, base + ".svg")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(make_svg_for(theme_dir, svg, ov, scale, align, keep_opacity))
+    else:
+        path = os.path.join(store_dir, base + ".png")
+        theme = Theme(theme_dir, (size,))
+        compose(theme, render_symbol(svg, size, scale * ov.get("scale", 1.0), not keep_opacity),
+                size, ov.get("align", align), ov.get("dx", 0.0), ov.get("dy", 0.0)).save(path, optimize=True)
+    return path
+
+
+def set_folder_icons(manifest, dirs, icon_path, recipe, set_icon=None):
+    """Set icon_path as the custom icon of each folder, one by one: a failure is reported in that
+    folder's FolderResult and does not stop the others. Only folders whose icon was set get the recipe
+    in the manifest (recipe None: none is recorded); a failed folder keeps its old entry. The caller holds
+    manifest in a store.editing() block, which saves it once at the end. set_icon(folder, uri) raises
+    GioError or OSError on failure; None means gio_set (looked up at call time)."""
+    set_icon = set_icon or gio_set
+    uri = "file://" + icon_path
+    results = []
+    for folder in dirs:
+        try:
+            set_icon(folder, uri)
+        except (GioError, OSError) as e:
+            results.append(FolderResult(folder, False, str(e)))
+            continue
+        if recipe:
+            manifest.record(folder, recipe)
+        results.append(FolderResult(folder, True, "icon set"))
+    return results
+
+
+def apply_folders(dirs, symbol, accent, *, dark, symbols_dir, store_dir=None, manifest_path=None,
+                  set_icon=None):
+    """Apply one recipe (symbol and accent, default scale and align) to several folders. The icon is built
+    once into the store's icons directory, with the same name and content that `apply FOLDER SYMBOL
+    --accent ACCENT --symbols-dir SYMBOLS_DIR` gives in the same light/dark style, then set on each
+    folder. The manifest is changed under one lock and saved once, for the folders whose icon was set;
+    an existing recipe of such a folder is replaced as a whole.
+
+    dark: the light/dark style to build in. The window passes the style its preview is drawn in
+    (libadwaita's colour scheme); the CLI takes it from the icon theme's name, which normally agrees.
+    symbol: a name looked up in symbols_dir, or a path to an .svg; it is recorded by name only for a name
+    looked up in Yaru's own tree (YARU_SYMBOLS), else by absolute path. set_icon: see set_folder_icons.
+
+    Returns one FolderResult per folder (duplicates dropped, order kept). Raises store.ManifestError
+    (manifest damaged or newer) or ApplyError (unknown accent or symbol, icon not built) before any
+    folder is changed."""
+    seen, folders = set(), []
+    for d in map(store.folder_path, dirs):
+        if d not in seen:
+            seen.add(d)
+            folders.append(d)
+    if not folders:
+        return []
+    with store.editing(manifest_path) as m:
+        m.check_writable()
+        try:
+            theme_name = yaru.variant_name(accent, dark)
+        except ValueError as e:
+            raise ApplyError(str(e)) from None
+        svg = lookup_symbol(symbol, symbols_dir)
+        recipe = Recipe(recipe_symbol(symbol, svg, symbols_dir), accent)
+        try:
+            ov = load_overrides().get(symbol_name(svg), {})
+            icon = write_icon(theme_ref(theme_name), theme_name, svg, store_dir or store.icons_dir(), ov)
+        except (OSError, subprocess.SubprocessError, ValueError) as e:
+            raise ApplyError(f"cannot build the icon for {svg}: {e}") from e
+        return set_folder_icons(m, folders, icon, recipe, set_icon)
 
 
 def apply(a):
@@ -126,30 +241,16 @@ def apply(a):
         _warn(m)
         m.check_writable()                     # fail before anything is built or set
         theme_name, accent = resolve_theme(a)
-        roots = ([a.icons_root] if a.icons_root else []) + ["~/.local/share/icons", "/usr/share/icons"]
-        if a.format == "svg" and not a.icons_root and theme_name in builtin_themes():
-            theme_dir = theme_name                         # built-in data: no installed theme needed
-        else:
-            theme_dir = find_theme_dir(theme_name, roots)
+        theme_dir = theme_ref(theme_name, a.format, a.icons_root)
         svg = find_symbol(a.symbol, a.symbols_dir)
-        name = os.path.basename(svg)[:-len("-symbolic.svg")] if svg.endswith("-symbolic.svg") \
-            else os.path.splitext(os.path.basename(svg))[0]
-        by_name = svg != a.symbol and a.symbols_dir == YARU_SYMBOLS
-        recipe = accent and Recipe(name if by_name else os.path.abspath(svg), accent, a.scale, a.align)
+        name = symbol_name(svg)
+        recipe = accent and Recipe(recipe_symbol(a.symbol, svg, a.symbols_dir), accent, a.scale, a.align)
         store_dir = os.path.expanduser(a.store or store.icons_dir())
         os.makedirs(store_dir, exist_ok=True)
         ov = {} if a.no_overrides else load_overrides(a.overrides).get(name, {})
-        base = f"{theme_name}-{name}{_file_suffix(a, name, ov)}"
-        if a.format == "svg":
-            png = os.path.join(store_dir, base + ".svg")
-            with open(png, "w", encoding="utf-8") as f:
-                f.write(make_svg_for(theme_dir, svg, ov, a.scale, a.align, a.keep_opacity))
-        else:
-            png = os.path.join(store_dir, base + ".png")
-            theme = Theme(theme_dir, (a.size,))
-            compose(theme, render_symbol(svg, a.size, a.scale * ov.get("scale", 1.0), not a.keep_opacity),
-                    a.size, ov.get("align", a.align), ov.get("dx", 0.0), ov.get("dy", 0.0)).save(png, optimize=True)
-        cmd = ["gio", "set", folder, "metadata::custom-icon", "file://" + png]
+        png = write_icon(theme_dir, theme_name, svg, store_dir, ov, a.scale, a.align, a.keep_opacity,
+                         a.format, a.size)
+        cmd =["gio", "set", folder, "metadata::custom-icon", "file://" + png]
         print(f"{theme_name}: {name} -> {png}")
         if not recipe:
             print(f"warning: '{theme_name}' is not a Yaru variant, so {display_path(folder)} is not recorded "
@@ -162,12 +263,9 @@ def apply(a):
             if recipe:
                 print(f"would record {display_path(folder)} in {m.path}")
             return
-        try:
-            gio_set(folder, "file://" + png)
-        except GioError as e:
-            sys.exit(f"gio failed: {e}")
-        if recipe:
-            m.record(folder, recipe)
+        [result] = set_folder_icons(m, [folder], png, recipe)
+        if not result.ok:
+            sys.exit(f"gio failed: {result.message}")
     print(f"icon set on {folder} (restart Nautilus if it does not update: nautilus -q)")
 
 
