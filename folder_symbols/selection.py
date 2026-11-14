@@ -1,32 +1,118 @@
-"""Path normalisation and sidebar-header text helpers (no GTK dependency)."""
+"""Path normalisation, the launcher's path check and sidebar-header text helpers (no GTK dependency)."""
 import os
+import re
+import stat
+from dataclasses import dataclass
 from urllib.parse import urlparse, unquote
 
 from folder_symbols.store import folder_path
 
+PROG = "folder-symbols-gui"
+MAX_LISTED = 10                     # rejected paths listed in the error before "... and N more"
+_URI = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 
-def normalise_paths(paths):
-    """Return (dirs, ignored_count).
 
-    Accepts plain paths or file:// URIs (percent-encoded names are decoded).
-    Applies the same normalisation as store.folder_path (abspath + expanduser).
-    Keeps only existing directories; deduplicates preserving input order.
-    Duplicates are dropped silently and do NOT increment ignored_count.
-    ignored_count counts only inputs that are not existing directories.
+@dataclass(frozen=True)
+class Selection:
+    """The resolved arguments of a launch.
+
+    dirs – existing folders (absolute, symlinks not resolved), input order, duplicates merged
+    rejected – (path, reason) for every other argument, input order, duplicates merged; path is absolute,
+               or the URI itself for a non-file URI with no local path
+    paths – the paths of dirs and rejected together, in input order
+    empty – True if an empty argument was given (skipped and not counted, like a duplicate)
     """
-    seen, dirs, ignored = set(), [], 0
-    for p in paths:
-        if p.startswith("file://"):
-            p = unquote(urlparse(p).path)
-        p = folder_path(p)
-        if p in seen:
+    dirs: tuple
+    rejected: tuple
+    paths: tuple
+    empty: bool = False
+
+    @property
+    def total(self):
+        return len(self.dirs) + len(self.rejected)
+
+
+def _reason(path):
+    """None if path is an existing folder (a symlink to one included), otherwise why it is not."""
+    try:
+        st = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return "broken link" if os.path.islink(path) else "not found"
+    except OSError as e:
+        return f"cannot access ({e.strerror})"
+    return None if stat.S_ISDIR(st.st_mode) else "not a folder"
+
+
+def resolve_selection(args, local_path=None):
+    """Resolve launch arguments: plain paths or URIs.
+
+    file:// URIs are decoded. Other URIs (smb://, sftp://, ...) go through local_path(uri) -> str | None
+    (the GUI passes Gio's get_path, which gives the FUSE path of a mounted GVfs share) and are rejected as
+    "not a local folder" when it gives none. Paths get store.folder_path (abspath + expanduser, symlinks
+    not resolved). Empty arguments are skipped and not counted.
+    """
+    seen, dirs, rejected, paths, empty = set(), [], [], [], False
+    for arg in args:
+        if arg == "":
+            empty = True
             continue
-        if not os.path.isdir(p):
-            ignored += 1
+        reason = None
+        if arg.startswith("file://"):
+            path = folder_path(unquote(urlparse(arg).path))
+        elif _URI.match(arg):
+            local = local_path(arg) if local_path else None
+            path, reason = (folder_path(local), None) if local else (arg, "not a local folder")
+        else:
+            path = folder_path(arg)
+        if path in seen:
             continue
-        seen.add(p)
-        dirs.append(p)
-    return dirs, ignored
+        seen.add(path)
+        paths.append(path)
+        reason = reason or _reason(path)
+        if reason:
+            rejected.append((path, reason))
+        else:
+            dirs.append(path)
+    return Selection(tuple(dirs), tuple(rejected), tuple(paths), empty)
+
+
+def selection_error(selection):
+    """The launcher's error text when arguments were given but none is an existing folder, else None.
+    The rejected paths are listed one per line, at most MAX_LISTED of them."""
+    if selection.dirs or not (selection.rejected or selection.empty):
+        return None
+    items = [f"{path}: {reason}" for path, reason in selection.rejected]
+    if selection.empty:
+        items.append('"": empty argument')
+    lines = [f"{PROG}: no existing folder among the given paths"]
+    lines += [f"  {item}" for item in items[:MAX_LISTED]]
+    if len(items) > MAX_LISTED:
+        lines.append(f"  ... and {len(items) - MAX_LISTED} more")
+    return "\n".join(lines)
+
+
+def launch_argv(argv, local_path=None):
+    """Check a launch's argv before GApplication sees it. Returns (argv to run, None) or (None, error).
+
+    No arguments, or any argument starting with "-" (GApplication's own options): argv unchanged.
+    Otherwise the arguments are resolved (resolve_selection): with no existing folder among them, the
+    error text; else argv[0] and the resolved paths, so the open handler sees exactly what was checked.
+    """
+    args = list(argv[1:])
+    if not args or any(a.startswith("-") for a in args):
+        return list(argv), None
+    selection = resolve_selection(args, local_path)
+    error = selection_error(selection)
+    if error:
+        return None, error
+    return [argv[0], *selection.paths], None
+
+
+def normalise_paths(paths, local_path=None):
+    """Return (dirs, ignored_count): resolve_selection's folders as a list and the number of rejected
+    arguments. Duplicates and empty arguments do NOT increment ignored_count."""
+    selection = resolve_selection(paths, local_path)
+    return list(selection.dirs), len(selection.rejected)
 
 
 def tilde(path):

@@ -1,4 +1,6 @@
 """FolderSymbolsApplication: Adw.Application subclass."""
+import sys
+
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -6,7 +8,7 @@ from gi.repository import Adw, Gio, GLib
 
 from folder_symbols.apply import apply_folders, reset_folders
 from folder_symbols.preview import PreviewSession
-from folder_symbols.selection import normalise_paths
+from folder_symbols.selection import launch_argv, resolve_selection, selection_error
 from folder_symbols.gui.window import APP_TITLE, FolderSymbolsWindow
 
 APP_ID = "io.github.VladyslavChernyshov.FolderSymbols"
@@ -40,9 +42,32 @@ class FolderSymbolsApplication(Adw.Application):
                                                apply_func=self._apply_func, reset_func=self._reset_func)
         self._window.present()
 
+    def run(self, argv=None):
+        """Check the paths in the launching process, before GApplication registers or forwards them to a
+        running instance: with no existing folder among them, print the error and return 1 (no window
+        opens, an open window is not touched). None and a bare [argv0] run as before."""
+        if argv is None:
+            return super().run(None)
+        argv, error = launch_argv(list(argv), local_path=_gio_local_path)
+        if error:
+            print(error, file=sys.stderr)
+            return 1
+        return super().run(argv)
+
     def do_open(self, files, n_files, hint):
-        # files is a list of Gio.File; get_path() returns the decoded local path.
+        # files is a list of Gio.File; get_path() returns the decoded local path. run() has checked the
+        # paths already; this guard covers an Open that did not go through it (and a folder removed since).
         paths = [f.get_path() or f.get_uri() for f in files]
-        dirs, ignored = normalise_paths(paths)
+        selection = resolve_selection(paths, local_path=_gio_local_path)
+        if not selection.dirs:
+            error = selection_error(selection)
+            if error:
+                print(error, file=sys.stderr)
+            return
         self.activate()
-        self._window.update_selection(dirs, len(dirs) + ignored)
+        self._window.update_selection(list(selection.dirs), selection.total)
+
+
+def _gio_local_path(uri):
+    """The local path of a URI (the FUSE path of a mounted GVfs share), or None."""
+    return Gio.File.new_for_uri(uri).get_path()
