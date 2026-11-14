@@ -89,7 +89,7 @@ class SymbolGallery(Gtk.Box):
         _load_css()
         self._query = ""
         self._category = None
-        self._pending_scroll = None              # position to scroll to once the grid has its size
+        self._pending_scroll = None              # (position, flags) to scroll to once the grid has its size
         self._scroll_tick = None
 
         store = Gio.ListStore(item_type=SymbolItem)
@@ -123,18 +123,21 @@ class SymbolGallery(Gtk.Box):
 
     def select_symbol(self, symbol):
         """Select symbol (a gallery.Symbol, or None for no selection) as if it had been clicked, and scroll
-        it into view (or to the top for None). A symbol that the current filter hides is not selected.
-        Keyboard focus does not move."""
+        it into view with keyboard focus on it (or scroll to the top for None, focus unchanged). A symbol
+        that the current filter hides is not selected."""
         position = next((i for i, item in enumerate(self._filtered) if item.symbol == symbol),
                         Gtk.INVALID_LIST_POSITION) if symbol is not None else Gtk.INVALID_LIST_POSITION
         self._selection.set_selected(position)
-        self._scroll_to(position if position != Gtk.INVALID_LIST_POSITION else 0)
+        if position != Gtk.INVALID_LIST_POSITION:
+            self._scroll_to(position, Gtk.ListScrollFlags.FOCUS)   # arrow keys start from the selected cell
+        else:
+            self._scroll_to(0, Gtk.ListScrollFlags.NONE)
 
-    def _scroll_to(self, position):
+    def _scroll_to(self, position, flags):
         """Scroll position into view on the next frame in which the grid has a size. Gtk.GridView.scroll_to
         called before the grid's first allocation (the window is opened with a selection) leaves the view
         at the top and the grid half drawn, so it waits for a tick callback."""
-        self._pending_scroll = position
+        self._pending_scroll = (position, flags)
         if self._scroll_tick is None:
             self._scroll_tick = self._grid.add_tick_callback(self._on_scroll_tick)
 
@@ -142,8 +145,9 @@ class SymbolGallery(Gtk.Box):
         if grid.get_height() <= 0:
             return GLib.SOURCE_CONTINUE
         self._scroll_tick = None
-        if self._pending_scroll < self._filtered.get_n_items():
-            grid.scroll_to(self._pending_scroll, Gtk.ListScrollFlags.NONE, None)     # GTK 4.12
+        position, flags = self._pending_scroll
+        if position < self._filtered.get_n_items():
+            grid.scroll_to(position, flags, None)                                    # GTK 4.12
         return GLib.SOURCE_REMOVE
 
     def set_filter(self, query, category):

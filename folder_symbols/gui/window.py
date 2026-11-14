@@ -108,5 +108,5 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
             if line:
                 print(line, file=sys.stderr)
         self._gallery_header.reset_filter()
-        self._panel.set_accent(state.accent)
+        self._panel.set_initial_accent(state.accent)
         self._gallery.select_symbol(state.symbol)

@@ -7,7 +7,7 @@ import pytest
 from conftest import SYMBOLS_DIR
 from folder_symbols import preview, yaru
 from folder_symbols.preview import PreviewError, PreviewSession, resolve_variant, system_variant, variant_for
-from folder_symbols.svg import make_svg
+from folder_symbols.svg import make_plain_svg, make_svg
 from folder_symbols.symbols import find_symbols, load_overrides, symbol_name
 
 SQUARE = '<rect x="3" y="3" width="10" height="10" fill="#222"/>'
@@ -129,6 +129,32 @@ def test_missing_symbol_is_a_preview_error(session, tmp_path):
 
 
 # ------------------------------------------------------------- the temporary directory
+@pytest.mark.parametrize("variant", ["Yaru", "Yaru-sage-dark", "Yaru-mate-dark"])
+def test_plain_svg_has_the_variant_colours_and_no_symbol(variant):
+    text = make_plain_svg(variant)
+    ET.fromstring(text)                                       # valid XML
+    colors = yaru.builtin_themes()[variant]["colors"]
+    assert colors[0] in text and colors[1] in text
+    assert yaru.DUMMY_ACCENT not in text and yaru.DUMMY_DARK not in text
+    assert "SYMBOL-" not in text and "fs-symbol" not in text
+
+
+def test_plain_svg_of_light_mate_is_its_fixed_drawing():
+    assert make_plain_svg("Yaru-mate") == yaru.template_text("Yaru-mate")
+
+
+def test_build_plain_writes_into_the_session_dir_only(session):
+    path = session.build_plain("Yaru-purple")
+    assert os.path.dirname(path) == session.dir
+    assert os.listdir(session.dir) == ["Yaru-purple-plain.svg"]
+    assert "#7561d6" in open(path, encoding="utf-8").read()
+
+
+def test_build_plain_unknown_variant_is_a_preview_error(session):
+    with pytest.raises(PreviewError):
+        session.build_plain("Yaru-nosuch")
+
+
 def test_close_removes_the_directory_and_can_be_repeated(tmp_path, symbol):
     s = PreviewSession(base_dir=tmp_path / "session-base")
     s.build(symbol, "Yaru")

@@ -3,7 +3,7 @@ import re
 
 from .engine import SS, ink_center, strip_opacity, svg_units
 from .yaru import DUMMY_ACCENT, DUMMY_DARK, EMBOSS, INK_CENTER, SYMBOL_PX, render_symbol, svg_data, \
-    template_path
+    template_path, template_text
 
 
 def _symbol_markup(svg, solid):
@@ -63,6 +63,15 @@ def make_svg(theme_ref, symbol_svg, scale=1.0, align="bbox", dx=0.0, dy=0.0, sol
     if data["colors"]:
         text = text.replace(DUMMY_ACCENT, data["colors"][0]).replace(DUMMY_DARK, data["colors"][1])
     return text.replace("<!--SYMBOL-DEFS-->", defs).replace("<!--SYMBOL-LAYERS-->", layers)
+
+
+def make_plain_svg(theme_ref):
+    """Yaru's folder in this theme variant without a symbol (e.g. a built-in name such as 'Yaru-sage')."""
+    data = svg_data(theme_ref)
+    text = template_text(theme_ref)
+    if data["colors"]:
+        text = text.replace(DUMMY_ACCENT, data["colors"][0]).replace(DUMMY_DARK, data["colors"][1])
+    return text
 
 
 def make_svg_for(theme_ref, symbol_svg, overrides, scale=1.0, align="bbox", keep_opacity=False):

@@ -3,7 +3,7 @@ directory (no GTK). It never touches the manifest, the icon store, gio or any fo
 import os, subprocess, tempfile
 
 from . import yaru
-from .svg import make_svg_for
+from .svg import make_plain_svg, make_svg_for
 from .symbols import load_overrides, symbol_name
 
 
@@ -65,6 +65,19 @@ class PreviewSession:
                 f.write(text)
         except (OSError, subprocess.SubprocessError, ValueError, AttributeError) as e:
             raise PreviewError(f"cannot build a preview of {symbol_svg}: {e}") from e
+        return path
+
+    def build_plain(self, variant):
+        """Path of an SVG of the plain folder (no symbol) in this built-in variant."""
+        if variant not in yaru.builtin_themes():
+            raise PreviewError(f"unknown theme variant {variant!r}")
+        path = os.path.join(self.dir, f"{variant}-plain.svg")
+        try:
+            text = make_plain_svg(variant)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        except (OSError, ValueError) as e:
+            raise PreviewError(f"cannot build a preview of the plain folder: {e}") from e
         return path
 
     def close(self):
