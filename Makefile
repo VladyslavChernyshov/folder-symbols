@@ -16,6 +16,9 @@ DIST       ?= dist
 OUT        ?= $(HOME)/release
 TAG        ?= v1
 K          ?=
+# where nautilus-python looks for per-user extensions
+NAUTILUS_EXT_DIR ?= $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/nautilus-python/extensions
+NAUTILUS_EXT     := folder_symbols_nautilus.py
 
 .DEFAULT_GOAL := help
 .PHONY: help deps \
@@ -24,12 +27,12 @@ K          ?=
         release \
         screenshot social-preview themes-json \
         cli-help clean \
-        app
+        app nautilus-install nautilus-uninstall
 
 help: ## Show this list
 	@awk 'BEGIN {FS = ":.*## "} \
 	  /^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5); next} \
-	  /^[a-zA-Z_-]+:.*## / {printf "  \033[36mmake %-15s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	  /^[a-zA-Z_-]+:.*## / {printf "  \033[36mmake %-19s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@echo
 
 ##@ Setup
@@ -94,6 +97,31 @@ themes-json: ## Rebuild assets/themes.json after a Yaru update (then run `make t
 ##@ GUI
 app: ## Run the GUI app; PATHS= accepts space-separated folder paths, e.g. make app PATHS="$$HOME/Music"
 	./folder-symbols-gui $(PATHS)
+
+##@ Nautilus (development)
+nautilus-install: ## Symlink the "Choose Icon…" extension into your Nautilus extensions (then: nautilus -q)
+	@dpkg -s python3-nautilus >/dev/null 2>&1 || echo "warning: python3-nautilus is not installed (sudo apt install python3-nautilus)"
+	@mkdir -p "$(NAUTILUS_EXT_DIR)"
+	@link="$(NAUTILUS_EXT_DIR)/$(NAUTILUS_EXT)"; \
+	if [ -e "$$link" ] || [ -L "$$link" ]; then \
+	  if [ "$$(readlink "$$link")" != "$(CURDIR)/nautilus/$(NAUTILUS_EXT)" ]; then \
+	    echo "$$link exists and is not this repository's symlink; leaving it alone"; exit 1; \
+	  fi; \
+	fi; \
+	ln -sfn "$(CURDIR)/nautilus/$(NAUTILUS_EXT)" "$$link" && echo "linked $$link -> $(CURDIR)/nautilus/$(NAUTILUS_EXT)"
+	@echo "The menu item will launch: $(CURDIR)/folder-symbols-gui (found through the symlink; FOLDER_SYMBOLS_GUI in Nautilus's environment overrides it)"
+	@echo "Next: run  nautilus -q  then open Files again"
+
+nautilus-uninstall: ## Remove only that symlink (then: nautilus -q)
+	@link="$(NAUTILUS_EXT_DIR)/$(NAUTILUS_EXT)"; \
+	if [ -L "$$link" ] && [ "$$(readlink "$$link")" = "$(CURDIR)/nautilus/$(NAUTILUS_EXT)" ]; then \
+	  rm "$$link" && echo "removed $$link"; \
+	elif [ -e "$$link" ] || [ -L "$$link" ]; then \
+	  echo "$$link is not this repository's symlink; leaving it alone"; exit 1; \
+	else \
+	  echo "nothing to remove: $$link does not exist"; \
+	fi
+	@echo "Next: run  nautilus -q  so Files forgets the item"
 
 ##@ Misc
 cli-help: ## Check that running the script without arguments prints the help
