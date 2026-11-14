@@ -1,5 +1,7 @@
 """Header bars of the two window panes: GalleryHeader (window buttons, search, categories) above the symbol
 grid, and FolderHeader (selected folder, main menu) above the preview sidebar."""
+import sys
+
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -10,6 +12,7 @@ from folder_symbols.selection import panel_title, panel_tooltip
 
 ALL_CATEGORIES = "All categories"
 HEADER_GAP = 8                           # window buttons -> search -> category button (mockup .hbl gap)
+CATEGORY_MENU_MAX_HEIGHT = 400          # content height of the category menu, about 12 rows; it scrolls above
 NO_CATEGORY_ICON = "view-list-symbolic"
 CLEAR_CATEGORY_ICONS = ["cross-small-symbolic", "window-close-symbolic"]   # first one the theme has
 
@@ -51,6 +54,8 @@ class GalleryHeader(Adw.Bin):
         self._button = Adw.SplitButton(child=self._button_icon, action_name="gallery.show-all",
                                        dropdown_tooltip="Choose a category",
                                        menu_model=self._category_menu(categories(symbols)))
+        self._button.connect("notify::popover", lambda button, _pspec: _cap_menu_height(button))
+        _cap_menu_height(self._button)
         if not symbols:
             self.search.set_sensitive(False)
             self._button.set_sensitive(False)
@@ -103,6 +108,26 @@ class GalleryHeader(Adw.Bin):
         else:
             self._button_icon.set_from_gicon(Gio.ThemedIcon.new_from_names(CLEAR_CATEGORY_ICONS))
             self._button.set_tooltip_text(category_tooltip(name))
+
+
+def _cap_menu_height(button):
+    """Limit the height of a split button's menu to CATEGORY_MENU_MAX_HEIGHT, so a long menu scrolls
+    inside it instead of reaching past the window. Gtk.PopoverMenu has no maximum height of its own, but
+    its child is a Gtk.ScrolledWindow with propagate-natural-height (GTK 4.14 to 4.22 at least), which
+    takes a max-content-height. Only public API; when the layout is not the expected one, the menu is
+    left as it is."""
+    try:
+        popover = button.get_popover()
+        if popover is None:
+            return
+        scroller = popover.get_child() if isinstance(popover, Gtk.PopoverMenu) else None
+        if not isinstance(scroller, Gtk.ScrolledWindow):
+            print("folder-symbols: category menu height not limited (unexpected menu layout)", file=sys.stderr)
+            return
+        scroller.set_max_content_height(CATEGORY_MENU_MAX_HEIGHT)
+        scroller.set_propagate_natural_height(True)
+    except Exception as e:                  # never let a cosmetic tweak break the window
+        print(f"folder-symbols: category menu height not limited ({e})", file=sys.stderr)
 
 
 class FolderHeader(Adw.Bin):
