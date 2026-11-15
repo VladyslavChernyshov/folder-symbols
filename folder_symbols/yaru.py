@@ -18,6 +18,7 @@ EMBOSS = 4 / 512                          # inset-shadow / highlight offset
 SIZE_DIRS = ["16x16", "16x16@2x", "24x24", "24x24@2x", "32x32", "32x32@2x",
              "48x48", "48x48@2x", "256x256", "256x256@2x"]
 ALIAS = {"256": "256x256", "512": "256x256@2x"}
+DEFAULT_SIZE = "512"                      # the PNG size when none is given (--size, recipes, icon file names)
 NO_SYMBOL = {"16x16", "16x16@2x"}         # Yaru draws no symbol on its smallest folders
 EMBOSS_MIN_PX = 256                       # below this Yaru's symbols are flat, one colour
 MAX_INK_W, MAX_INK_H = 0.52, 0.38   # ink must fit this box (fractions of icon size); a full

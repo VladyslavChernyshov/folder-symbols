@@ -74,6 +74,9 @@ def test_variant_for_no_or_unknown_accent_is_the_system_variant(monkeypatch, acc
 
 @pytest.mark.parametrize("path, name", [
     ("/x/apps/community-symbolic.svg", "community"), ("/x/logo.svg", "logo"), ("rel/a-b-symbolic.svg", "a-b"),
+    ("a.b-symbolic.svg", "a.b"), ("a.b.svg", "a.b"),
+    # odd names, pinned: only a final -symbolic.svg or the final extension is removed
+    ("x.svg.svg", "x.svg"), ("x.SVG", "x"), (".svg", ".svg"), ("a.svg-b.svg", "a.svg-b"),
 ])
 def test_symbol_name(path, name):
     assert symbol_name(path) == name
@@ -201,3 +204,10 @@ def test_overridden_symbol_gets_its_overrides(session):
                         ov.get("dy", 0.0))
     assert expected != make_svg("Yaru", sym)
     assert open(session.build(sym, "Yaru"), encoding="utf-8").read() == expected
+
+
+def test_fallback_variant_is_built_from_the_default_accent():
+    from folder_symbols import accents
+    assert accents.DEFAULT_ACCENT == "orange"
+    for dark in (False, True):
+        assert resolve_variant(None, dark) == yaru.variant_name(accents.DEFAULT_ACCENT, dark)

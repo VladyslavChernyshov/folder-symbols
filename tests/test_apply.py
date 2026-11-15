@@ -431,3 +431,21 @@ def test_reset_of_a_folder_without_an_entry_still_unsets_it(isolated_home):
     unset = Unsetter()
     assert [r.ok for r in reset_folders([d], unset_icon=unset)] == [True] and unset.calls
     assert not os.path.exists(store.manifest_path())               # nothing changed, nothing saved
+
+
+# ---------------------------------------------------------------- the default PNG size
+def _size_action(parser):
+    return next(a for a in parser._actions if a.option_strings == ["--size"])
+
+
+@pytest.mark.parametrize("parser", [cli.parser_apply, cli.parser_compose])
+def test_size_default_and_its_help_follow_default_size(parser):
+    action = _size_action(parser())
+    assert action.default == yaru.DEFAULT_SIZE
+    # the help prose names the default size as such (it is a literal there, so this keeps them together)
+    assert f"{yaru.DEFAULT_SIZE} (= {yaru.ALIAS[yaru.DEFAULT_SIZE]}, default)" in action.help
+
+
+def test_icon_suffix_treats_default_size_as_default():
+    assert ap.icon_suffix("x", {}, png_size=yaru.DEFAULT_SIZE) == ""
+    assert ap.icon_suffix("x", {}, png_size="256") != ""

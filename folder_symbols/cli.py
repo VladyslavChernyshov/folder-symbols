@@ -6,12 +6,12 @@ from .apply import apply, list_folders, prune, reset, reset_all
 from .batch import batch
 from .store import SYSTEM_ACCENT, ManifestError
 from .svg import make_svg
-from .symbols import YARU_SYMBOLS, effective_params, load_overrides
-from .yaru import Theme, accents, builtin_themes, compose, render_symbol, theme_ref_kind
+from .symbols import YARU_SYMBOLS, effective_params, load_overrides, symbol_name
+from .yaru import DEFAULT_SIZE, Theme, accents, builtin_themes, compose, render_symbol, theme_ref_kind
 
 
 def one(a):
-    name = os.path.basename(a.symbol_svg).replace("-symbolic.svg", "").replace(".svg", "")
+    name = symbol_name(a.symbol_svg)
     ov = {} if a.no_overrides else load_overrides(a.overrides).get(name, {})
     if a.output_png.lower().endswith(".svg"):
         if not theme_ref_kind(a.theme_dir):
@@ -93,7 +93,7 @@ def parser_compose():
     p.add_argument("symbol_svg", help="the symbolic icon to put on the folder, e.g. "
                    "/usr/share/icons/Yaru/scalable/actions/share-symbolic.svg")
     p.add_argument("output_png", metavar="OUTPUT", help="file to write, ending in .png or .svg")
-    p.add_argument("--size", default="512", metavar="SIZE",
+    p.add_argument("--size", default=DEFAULT_SIZE, metavar="SIZE",
                    help="PNG only: icon size, one of " + _SIZES + ". Ignored for .svg")
     _common(p)
     p.add_argument("--dx", type=float, default=0.0, metavar="F",
@@ -144,7 +144,7 @@ def parser_apply():
     p.add_argument("--format", choices=("svg", "png"), default="svg",
                    help="svg: one scalable file, sharp at any size (default); png: a raster icon, "
                         "see --size")
-    p.add_argument("--size", default="512", metavar="SIZE",
+    p.add_argument("--size", default=DEFAULT_SIZE, metavar="SIZE",
                    help="PNG only (--format png): icon size, one of " + _SIZES + ". Nautilus scales it down")
     _common(p)
     p.add_argument("--no-overrides", action="store_true", help="ignore overrides.json completely")
@@ -221,9 +221,9 @@ def parser_batch():
                         "/usr/share/icons); with --sizes svg and no --icons-root the built-in data "
                         "in assets/themes.json is used and no Yaru theme has to be installed. "
                         "Giving it measures the themes from these directories instead")
-    p.add_argument("--symbols-dir", default="/usr/share/icons/Yaru/scalable", metavar="DIR",
+    p.add_argument("--symbols-dir", default=YARU_SYMBOLS, metavar="DIR",
                    help="directory searched recursively for *-symbolic.svg. "
-                        "Default: /usr/share/icons/Yaru/scalable")
+                        f"Default: {YARU_SYMBOLS}")
     p.add_argument("--themes", default="all", metavar="LIST",
                    help="'all' (every Yaru* theme found, default) or a comma-separated list, "
                         "e.g. Yaru,Yaru-dark")

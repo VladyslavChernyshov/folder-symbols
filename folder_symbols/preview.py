@@ -3,6 +3,7 @@ directory (no GTK). It never touches the manifest, the icon store, gio or any fo
 import os, subprocess, tempfile
 
 from . import yaru
+from .accents import DEFAULT_ACCENT
 from .svg import make_plain_svg, make_svg_for
 from .symbols import load_overrides, symbol_name
 
@@ -16,7 +17,7 @@ def resolve_variant(icon_theme, dark):
     accent (plain Yaru) in the given light/dark style, so a non-Yaru system still gets a preview."""
     if yaru.parse_variant(icon_theme) and icon_theme in yaru.builtin_themes():
         return icon_theme
-    return yaru.variant_name("orange", dark)
+    return yaru.variant_name(DEFAULT_ACCENT, dark)
 
 
 def system_variant(dark):

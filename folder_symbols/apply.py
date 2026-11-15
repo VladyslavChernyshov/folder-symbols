@@ -6,7 +6,7 @@ from . import accents, store, yaru
 from .store import SYSTEM_ACCENT, Recipe
 from .svg import make_svg_for
 from .symbols import YARU_SYMBOLS, effective_params, find_symbols, load_overrides, symbol_name
-from .yaru import Theme, builtin_themes, compose, find_theme_dir, render_symbol
+from .yaru import DEFAULT_SIZE, Theme, builtin_themes, compose, find_theme_dir, render_symbol
 
 
 # ---------------------------------------------------------------- gio (the only place it is called)
@@ -138,7 +138,7 @@ def theme_ref(theme_name, fmt="svg", icons_root=None):
 
 def _not_in_recipe(a):
     """apply options that change the icon but are not part of the recipe."""
-    return [opt for opt, used in (("--format png", a.format == "png"), ("--size", a.size != "512"),
+    return [opt for opt, used in (("--format png", a.format == "png"), ("--size", a.size != DEFAULT_SIZE),
                                   ("--keep-opacity", a.keep_opacity), ("--no-overrides", a.no_overrides),
                                   ("--overrides", a.overrides is not None),
                                   ("--icons-root", a.icons_root is not None)) if used]
@@ -149,15 +149,15 @@ def icon_suffix(name, ov, scale=1.0, align="bbox", keep_opacity=False, png_size=
     of the options, so folders with the same symbol but e.g. another --scale do not share one file.
     png_size: the size of a PNG icon, None for SVG."""
     opts = {"scale": scale, "align": align, "keep_opacity": keep_opacity, "overrides": ov, "size": png_size}
-    default = {"scale": 1.0, "align": "bbox", "keep_opacity": False, "size": None if png_size is None else "512",
-               "overrides": load_overrides().get(name, {})}
+    default = {"scale": 1.0, "align": "bbox", "keep_opacity": False,
+               "size": None if png_size is None else DEFAULT_SIZE, "overrides": load_overrides().get(name, {})}
     if opts == default:
         return ""
     return "-" + hashlib.sha1(json.dumps(opts, sort_keys=True).encode()).hexdigest()[:8]
 
 
 def write_icon(theme_dir, theme_name, svg, store_dir, ov, scale=1.0, align="bbox", keep_opacity=False,
-               fmt="svg", size="512"):
+               fmt="svg", size=DEFAULT_SIZE):
     """Build the icon into store_dir as {theme_name}-{symbol}{icon_suffix}.svg (or .png) and return its
     path. theme_dir: from theme_ref(); ov: the symbol's overrides entry ({} for none)."""
     name = symbol_name(svg)
