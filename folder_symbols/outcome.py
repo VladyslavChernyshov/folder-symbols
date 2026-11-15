@@ -1,12 +1,13 @@
 """What the window does after Apply or Reset (no GTK): close, or show a dialog with a summary and the
 failed folders; the buttons' state; the Reset confirmation. Works on apply.FolderResult lists and the
-errors apply_folders and reset_folders raise."""
+errors apply_folders and reset_folders raise. Also the texts of Clean up (store.CleanupPlan and
+store.CleanupResult)."""
 import dataclasses
 import functools
 from typing import Optional
 
 from .apply import ApplyError, RecordError
-from .selection import tilde
+from .selection import MAX_LISTED, tilde
 from .store import ManifestError
 
 
@@ -150,3 +151,83 @@ def reset_confirmation(folders):
     """(heading, body, details) of the question asked before resetting several folders."""
     return (f"Reset the icons of {len(folders)} folders?", "They get the normal folder icon of the theme again.",
             "\n".join(tilde(f) for f in folders))
+
+
+# ---------------------------------------------------------------- Clean up
+@dataclasses.dataclass(frozen=True)
+class CleanupDialog:
+    """What a click on Clean up shows: a question (confirm: Cancel and Remove) or a notice (OK)."""
+    heading: str
+    body: str
+    details: str = ""            # the folders to forget, one per line
+    confirm: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class CleanupOutcome:
+    """After Remove, or an error at any step: a toast (success), else a dialog."""
+    toast: str = ""
+    title: str = ""
+    body: str = ""
+
+
+def cleanup_enabled(running):
+    """The menu item works on the whole manifest: the selection does not matter."""
+    return not running
+
+
+def _entries(n):
+    return "1 entry" if n == 1 else f"{n} entries"
+
+
+def cleanup_notes(plan):
+    """The lines about entries that were not checked (outside $HOME) or could not be checked."""
+    notes = []
+    if plan.skipped:
+        notes.append("1 folder outside your home was not checked." if plan.skipped == 1
+                     else f"{plan.skipped} folders outside your home were not checked.")
+    if plan.unknown:
+        n = len(plan.unknown)
+        notes.append("1 entry was kept because its folder could not be checked." if n == 1
+                     else f"{n} entries were kept because their folders could not be checked.")
+    return notes
+
+
+def listed(paths):
+    """The paths from ~, one per line, at most MAX_LISTED of them, then "... and N more"."""
+    lines = [tilde(p) for p in paths[:MAX_LISTED]]
+    if len(paths) > MAX_LISTED:
+        lines.append(f"... and {len(paths) - MAX_LISTED} more")
+    return "\n".join(lines)
+
+
+def cleanup_dialog(plan):
+    notes = cleanup_notes(plan)
+    if not plan.stale:
+        first = ("No folders are recorded." if not plan.total else
+                 "Every checked folder still exists." if notes else "Every recorded folder still exists.")
+        return CleanupDialog("Nothing to clean up", "\n\n".join([first, *notes]))
+    n = len(plan.stale)
+    heading = ("Remove 1 entry for a folder that no longer exists?" if n == 1
+               else f"Remove {n} entries for folders that no longer exist?")
+    body = "The entries are only forgotten: no icon files are deleted and no folder's icon is changed."
+    return CleanupDialog(heading, "\n\n".join([body, *notes]), listed([e.folder for e in plan.stale]), True)
+
+
+def cleanup_outcome(result=None, error=None):
+    if error is not None:
+        if isinstance(error, ManifestError):
+            return CleanupOutcome(title="Nothing was cleaned up", body=str(error))
+        if isinstance(error, OSError):
+            return CleanupOutcome(title="Nothing was cleaned up",
+                                  body=f"The manifest could not be saved: {error}. Nothing was changed.")
+        return CleanupOutcome(title="Something went wrong",
+                              body=f"{type(error).__name__}: {error}. Nothing was changed.")
+    removed, asked = len(result.removed), len(result.removed) + len(result.kept)
+    if not removed:
+        return CleanupOutcome(title="Nothing was removed",
+                              body="When checked again, none of the folders was surely missing (a drive may have "
+                                   "been mounted meanwhile), so every entry was kept.")
+    if removed == asked:
+        return CleanupOutcome(toast=f"Removed {_entries(removed)}")
+    return CleanupOutcome(toast=f"Removed {removed} of {asked} entries")

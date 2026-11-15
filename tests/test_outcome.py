@@ -1,4 +1,4 @@
-"""What the window does after Apply (folder_symbols/outcome.py): no GTK, no gio, no files."""
+"""What the window does after Apply, Reset and Clean up (folder_symbols/outcome.py): no GTK, no gio, no files."""
 import os
 import subprocess
 import sys
@@ -6,9 +6,10 @@ import sys
 import pytest
 
 from folder_symbols.apply import ApplyError, FolderResult, RecordError
-from folder_symbols.outcome import (RESET, Outcome, apply_block_reason, apply_outcome, apply_tooltip,
+from folder_symbols.outcome import (RESET, CleanupDialog, CleanupOutcome, Outcome, apply_block_reason,
+                                    apply_outcome, apply_tooltip, cleanup_dialog, cleanup_enabled, cleanup_outcome,
                                     reset_button_state, reset_confirmation, reset_outcome, summarize)
-from folder_symbols.store import ManifestError
+from folder_symbols.store import CleanupPlan, CleanupResult, Entry, ManifestError, Recipe
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -187,3 +188,85 @@ def test_reset_confirmation(tmp_path):
     heading, body, details = reset_confirmation([a, b, str(tmp_path / "X")])
     assert heading == "Reset the icons of 3 folders?" and "normal folder icon" in body
     assert details.splitlines() == ["~/A", "~/My Files", str(tmp_path / "X")]
+
+
+# ------------------------------------------------------------- Clean up
+def plan(stale=(), unknown=0, skipped=0, total=None):
+    entries = tuple(Entry(f, Recipe("a", "red")) for f in stale)
+    unk = tuple((Entry(f, Recipe("a", "red")), OSError(13, "Permission denied"))
+                for f in home(*(f"U{i}" for i in range(unknown))))
+    return CleanupPlan(entries, unk, skipped, len(entries) + unknown + skipped + 1 if total is None else total)
+
+
+EXTERNAL_1 = "1 folder outside your home was not checked."
+UNKNOWN_1 = "1 entry was kept because its folder could not be checked."
+SAFE = "The entries are only forgotten: no icon files are deleted and no folder's icon is changed."
+
+
+def test_cleanup_is_enabled_unless_busy():
+    assert cleanup_enabled(False) is True and cleanup_enabled(True) is False
+
+
+@pytest.mark.parametrize("p, body", [
+    (plan(total=0), "No folders are recorded."),
+    (plan(), "Every recorded folder still exists."),
+    (plan(skipped=1), f"Every checked folder still exists.\n\n{EXTERNAL_1}"),
+    (plan(skipped=3), "Every checked folder still exists.\n\n3 folders outside your home were not checked."),
+    (plan(unknown=1), f"Every checked folder still exists.\n\n{UNKNOWN_1}"),
+    (plan(unknown=2), "Every checked folder still exists.\n\n"
+                      "2 entries were kept because their folders could not be checked."),
+    (plan(skipped=1, unknown=1), f"Every checked folder still exists.\n\n{EXTERNAL_1}\n\n{UNKNOWN_1}"),
+])
+def test_cleanup_dialog_with_nothing_to_remove(p, body):
+    assert cleanup_dialog(p) == CleanupDialog("Nothing to clean up", body, "", False)
+
+
+def test_cleanup_dialog_asks_before_removing_one():
+    [a] = home("Gone")
+    assert cleanup_dialog(plan([a])) == CleanupDialog(
+        "Remove 1 entry for a folder that no longer exists?", SAFE, "~/Gone", True)
+
+
+def test_cleanup_dialog_lists_the_folders_with_the_notes():
+    a, b, c = home("A", "B", "C d")
+    d = cleanup_dialog(plan([a, b, c], unknown=1, skipped=1))
+    assert d.heading == "Remove 3 entries for folders that no longer exist?" and d.confirm
+    assert d.body == f"{SAFE}\n\n{EXTERNAL_1}\n\n{UNKNOWN_1}"
+    assert d.details == "~/A\n~/B\n~/C d"
+
+
+def test_cleanup_dialog_lists_at_most_ten_folders():
+    folders = home(*(f"F{i:02}" for i in range(12)))
+    d = cleanup_dialog(plan(folders))
+    assert d.heading == "Remove 12 entries for folders that no longer exist?"
+    assert d.details.splitlines() == [f"~/F{i:02}" for i in range(10)] + ["... and 2 more"]
+    assert len(cleanup_dialog(plan(folders[:10])).details.splitlines()) == 10
+
+
+def test_cleanup_dialog_shows_folders_outside_home_as_they_are():
+    assert cleanup_dialog(plan(["/media/drive/Photos"])).details == "/media/drive/Photos"
+
+
+@pytest.mark.parametrize("removed, kept, toast", [(1, 0, "Removed 1 entry"), (3, 0, "Removed 3 entries"),
+                                                   (2, 1, "Removed 2 of 3 entries")])
+def test_cleanup_outcome_success_is_a_toast(removed, kept, toast):
+    folders = home(*(f"F{i}" for i in range(removed + kept)))
+    result = CleanupResult(tuple(folders[:removed]), tuple(folders[removed:]))
+    assert cleanup_outcome(result) == CleanupOutcome(toast=toast)
+
+
+def test_cleanup_outcome_when_every_folder_came_back():
+    assert cleanup_outcome(CleanupResult((), tuple(home("A", "B")))) == CleanupOutcome(
+        title="Nothing was removed",
+        body="When checked again, none of the folders was surely missing (a drive may have been mounted "
+             "meanwhile), so every entry was kept.")
+
+
+def test_cleanup_outcome_of_errors():
+    assert cleanup_outcome(error=ManifestError("m.json is damaged (x); fix it")) == CleanupOutcome(
+        title="Nothing was cleaned up", body="m.json is damaged (x); fix it")
+    assert cleanup_outcome(error=OSError(28, "No space left on device")) == CleanupOutcome(
+        title="Nothing was cleaned up",
+        body="The manifest could not be saved: [Errno 28] No space left on device. Nothing was changed.")
+    assert cleanup_outcome(error=RuntimeError("boom")) == CleanupOutcome(
+        title="Something went wrong", body="RuntimeError: boom. Nothing was changed.")

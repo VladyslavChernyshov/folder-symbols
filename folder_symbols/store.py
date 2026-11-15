@@ -373,3 +373,58 @@ def stale_entries(manifest, include_external=False):
         elif state == "unknown":
             unknown.append((e, err))
     return stale, unknown, skipped
+
+
+# ---------------------------------------------------------------- cleanup (prune and the window's Clean up)
+@dataclasses.dataclass(frozen=True)
+class CleanupPlan:
+    """What a cleanup would do (see stale_entries): stale are the Entries to forget, unknown the
+    (Entry, OSError) kept because they cannot be checked, skipped the number of entries outside $HOME
+    left unchecked, total the number of usable entries, warnings the manifest's unusable entries."""
+    stale: tuple
+    unknown: tuple
+    skipped: int
+    total: int
+    warnings: tuple = ()
+
+
+@dataclasses.dataclass(frozen=True)
+class CleanupResult:
+    removed: tuple       # folders whose entries were forgotten
+    kept: tuple          # folders asked for but not removed (exist again, cannot check, or not recorded)
+
+
+def cleanup_plan(manifest, include_external=False):
+    stale, unknown, skipped = stale_entries(manifest, include_external)
+    return CleanupPlan(tuple(stale), tuple(unknown), skipped, len(manifest.entries()),
+                       tuple(manifest.warnings))
+
+
+def remove_missing(manifest, folders):
+    """Forget these folders, but only the ones that are still surely missing (folder_state, checked
+    again now: a drive may have been mounted since the plan); $HOME is never forgotten. The caller holds
+    manifest in a store.editing() block. Returns the folders whose entries were removed, sorted."""
+    home = _home()
+    folders = dict.fromkeys(map(folder_path, folders))
+    return manifest.remove_many(f for f in folders if f != home and folder_state(f)[0] == "missing")
+
+
+def plan_cleanup(manifest_path=None, include_external=False):
+    """The CleanupPlan of the manifest, read without a lock and without creating anything. Raises
+    ManifestError for a damaged manifest, or a newer one (it could not be saved afterwards)."""
+    m = load(manifest_path)
+    m.check_writable()
+    return cleanup_plan(m, include_external)
+
+
+def run_cleanup(paths, manifest_path=None):
+    """Forget the entries of these folders (normally a CleanupPlan's stale ones) that are still missing,
+    under one lock with at most one save. Raises ManifestError before any change, and OSError when the
+    lock or the save fails (the save is atomic: the manifest is then unchanged)."""
+    asked = list(dict.fromkeys(map(folder_path, paths)))
+    if not asked:
+        return CleanupResult((), ())
+    with editing(manifest_path) as m:
+        m.check_writable()
+        removed = remove_missing(m, asked)
+    return CleanupResult(tuple(removed), tuple(f for f in asked if f not in removed))

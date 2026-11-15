@@ -140,14 +140,14 @@ def _cap_menu_height(button):
 
 class FolderHeader(Adw.Bin):
     """Header bar of the sidebar: the selected folder's name (or "N folders"), with the paths in its
-    tooltip, and the main menu. "Clean up…" and "About" name app actions that do not exist yet, so GTK
-    shows them disabled."""
+    tooltip, and the main menu. "Clean up…" is the window's action win.clean-up; "About" names an app
+    action that does not exist yet, so GTK shows it disabled."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._title = Adw.WindowTitle()
         menu = Gio.Menu()
-        menu.append("Clean up…", "app.clean-up")
+        menu.append("Clean up…", "win.clean-up")
         menu.append("About", "app.about")
         button = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True,
                                 tooltip_text="Main Menu")

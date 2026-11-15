@@ -559,6 +559,164 @@ def test_prune_keeps_folders_below_a_dangling_symlinked_parent(isolated_home, gi
     assert [e.folder for e in store.entries()] == [below_dangling]
 
 
+# ------------------------------------------------------------- plan_cleanup / run_cleanup (the window's Clean up)
+def count_saves(monkeypatch):
+    saves = []
+    real = store.Manifest.save
+    monkeypatch.setattr(store.Manifest, "save", lambda self: (saves.append(1), real(self)))
+    return saves
+
+
+def test_plan_cleanup_without_a_manifest_creates_nothing(isolated_home):
+    plan = store.plan_cleanup()
+    assert plan == store.CleanupPlan((), (), 0, 0, ())
+    assert not os.path.exists(store.data_dir())
+
+
+def test_plan_cleanup_with_nothing_to_remove(isolated_home):
+    recorded(folder(isolated_home, "Music"), str(isolated_home))
+    lock = os.path.join(store.data_dir(), "manifest.lock")
+    os.unlink(lock)
+    plan = store.plan_cleanup()
+    assert (plan.stale, plan.unknown, plan.skipped, plan.total) == ((), (), 0, 2)
+    assert not os.path.exists(lock)                             # read only: not even a lock file
+
+
+def test_plan_cleanup_of_an_empty_manifest(isolated_home):
+    write_manifest({"schema_version": 2, "folders": []})
+    assert store.plan_cleanup() == store.CleanupPlan((), (), 0, 0, ())
+
+
+def test_plan_cleanup_finds_missing_skips_external_and_keeps_unknown(isolated_home, tmp_path):
+    (isolated_home / "Drive").symlink_to(tmp_path / "unmounted")
+    locked = isolated_home / "Locked"
+    (locked / "inner").mkdir(parents=True)
+    gone = [str(isolated_home / n) for n in ("A", "B", "C")]
+    unknown = [str(isolated_home / "Drive" / "X"), str(locked / "inner" / "Gone")]
+    external = str(tmp_path / "drive" / "Photos")
+    recorded(*gone, *unknown, external, folder(isolated_home, "Keep"), str(isolated_home))
+    locked.chmod(0)
+    try:
+        plan, wide = store.plan_cleanup(), store.plan_cleanup(include_external=True)
+    finally:
+        locked.chmod(0o755)
+    assert [e.folder for e in plan.stale] == gone
+    assert sorted(e.folder for e, _err in plan.unknown) == sorted(unknown)
+    assert all(isinstance(err, OSError) for _e, err in plan.unknown)
+    assert (plan.skipped, plan.total) == (1, 8)
+    assert {e.folder for e in wide.stale} == {*gone, external} and wide.skipped == 0
+
+
+def test_plan_cleanup_reports_unusable_entries_as_warnings(isolated_home):
+    write_manifest({"schema_version": 2, "folders": [{"path": "Gone"}, {"nopath": 1}]})
+    plan = store.plan_cleanup()
+    assert plan.stale == () and len(plan.warnings) == 2 and plan.total == 0
+
+
+@pytest.mark.parametrize("func", [store.plan_cleanup, lambda: store.run_cleanup(["~/Gone"])])
+def test_cleanup_with_a_damaged_or_newer_manifest_changes_nothing(isolated_home, func):
+    write_manifest("{oops")
+    with pytest.raises(ManifestError, match="damaged"):
+        func()
+    assert open(store.manifest_path()).read() == "{oops"
+    newer = json.dumps({"schema_version": store.SCHEMA_VERSION + 1,
+                        "folders": [{"path": "Gone", "recipe": {"symbol": "a", "accent": "red"}}]})
+    write_manifest(newer)
+    with pytest.raises(ManifestError, match="newer folder-symbols"):
+        func()
+    assert open(store.manifest_path()).read() == newer
+
+
+def test_run_cleanup_removes_the_planned_folders_in_one_save(isolated_home, monkeypatch):
+    gone = [str(isolated_home / n) for n in ("A", "B", "C", "D")]
+    keep = folder(isolated_home, "Keep")
+    recorded(*gone, keep)
+    saves = count_saves(monkeypatch)
+    plan = store.plan_cleanup()
+    result = store.run_cleanup([e.folder for e in plan.stale])
+    assert result == store.CleanupResult(tuple(gone), ())
+    assert len(saves) == 1 and [e.folder for e in store.entries()] == [keep]
+
+
+def test_run_cleanup_keeps_a_folder_that_came_back(isolated_home, monkeypatch):
+    a, b = str(isolated_home / "A"), str(isolated_home / "B")
+    recorded(a, b)
+    paths = [e.folder for e in store.plan_cleanup().stale]
+    os.mkdir(b)                                       # e.g. its drive was mounted meanwhile
+    assert store.run_cleanup(paths) == store.CleanupResult((a,), (b,))
+    assert [e.folder for e in store.entries()] == [b]
+
+
+def test_run_cleanup_keeps_a_folder_that_cannot_be_checked_any_more(isolated_home, tmp_path):
+    x = str(isolated_home / "Drive" / "X")
+    recorded(x)
+    paths = [e.folder for e in store.plan_cleanup().stale]
+    assert paths == [x]
+    (isolated_home / "Drive").symlink_to(tmp_path / "unmounted")
+    assert store.run_cleanup(paths) == store.CleanupResult((), (x,))
+    assert [e.folder for e in store.entries()] == [x]
+
+
+def test_run_cleanup_saves_nothing_when_nothing_is_removed(isolated_home, monkeypatch):
+    a = str(isolated_home / "A")
+    recorded(a)
+    before = open(store.manifest_path(), "rb").read()
+    os.mkdir(a)
+    saves = count_saves(monkeypatch)
+    assert store.run_cleanup([a]) == store.CleanupResult((), (a,))
+    assert saves == [] and open(store.manifest_path(), "rb").read() == before
+
+
+def test_run_cleanup_of_no_paths_touches_nothing(isolated_home):
+    assert store.run_cleanup([]) == store.CleanupResult((), ())
+    assert not os.path.exists(store.data_dir())
+
+
+def test_run_cleanup_never_removes_home_or_unrecorded_folders(isolated_home):
+    gone, other = str(isolated_home / "Gone"), str(isolated_home / "NotRecorded")
+    recorded(gone, str(isolated_home))
+    assert store.run_cleanup([str(isolated_home), gone, other]) == \
+        store.CleanupResult((gone,), (str(isolated_home), other))
+    assert [e.folder for e in store.entries()] == [str(isolated_home)]
+
+
+def test_run_cleanup_handles_duplicates(isolated_home, monkeypatch):
+    gone = str(isolated_home / "Gone")
+    write_manifest({"schema_version": 2, "folders": [{"path": "Gone", "recipe": {"symbol": "a", "accent": "red"}},
+                                                     {"path": "Gone"}, {"path": "Gone/"}]})
+    saves = count_saves(monkeypatch)
+    assert store.run_cleanup([gone, gone + "/", "~/Gone"]) == store.CleanupResult((gone,), ())
+    assert len(saves) == 1 and raw_manifest()["folders"] == []
+
+
+def test_run_cleanup_save_failure_leaves_the_manifest_as_it_was(isolated_home, monkeypatch):
+    gone = str(isolated_home / "Gone")
+    recorded(gone)
+    before = open(store.manifest_path(), "rb").read()
+
+    def fail(self):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(store.Manifest, "save", fail)
+    with pytest.raises(OSError, match="No space left"):
+        store.run_cleanup([gone])
+    assert open(store.manifest_path(), "rb").read() == before
+
+
+def test_run_cleanup_keeps_icon_files_unknown_fields_and_unusable_entries(isolated_home, gio, sym):
+    d = folder(isolated_home, "Moved")
+    cli.main(["apply", d, sym])
+    icons = sorted(os.listdir(store.icons_dir()))
+    data = raw_manifest()
+    data["future"] = {"x": 1}
+    data["folders"].append({"path": "NoRecipe"})
+    write_manifest(data)
+    os.rmdir(d)
+    assert store.run_cleanup([e.folder for e in store.plan_cleanup().stale]).removed == (d,)
+    assert icons and sorted(os.listdir(store.icons_dir())) == icons
+    assert raw_manifest()["future"] == {"x": 1} and raw_manifest()["folders"] == [{"path": "NoRecipe"}]
+    assert gio.calls == [d]                           # only the apply
+
+
 # ------------------------------------------------------------- following the system accent (schema 2)
 SCHEMA_1 = {"schema_version": 1, "future": {"x": 1},
             "folders": [{"path": "Music", "note": "kept", "recipe": {"symbol": "a", "accent": "red"}},

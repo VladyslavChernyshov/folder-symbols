@@ -6,14 +6,15 @@ import traceback
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GObject, Gtk
+from gi.repository import Adw, Gio, GObject, Gtk
 
 from folder_symbols.apply import ApplyError, RecordError, apply_folders, reset_folders
 from folder_symbols.gallery import list_symbols
 from folder_symbols.initial import initial_state, read_manifest, recorded_folders
-from folder_symbols.outcome import (apply_block_reason, apply_outcome, apply_tooltip, reset_button_state,
-                                    reset_confirmation, reset_outcome)
-from folder_symbols.store import ManifestError
+from folder_symbols.outcome import (apply_block_reason, apply_outcome, apply_tooltip, cleanup_dialog,
+                                    cleanup_enabled, cleanup_outcome, reset_button_state, reset_confirmation,
+                                    reset_outcome)
+from folder_symbols.store import ManifestError, plan_cleanup, run_cleanup
 from folder_symbols.symbols import default_symbols_dir
 from folder_symbols.gui.gallery import SymbolGallery
 from folder_symbols.gui.header import FolderHeader, GalleryHeader
@@ -31,12 +32,19 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
     # The gallery.Symbol selected in the gallery, or None.
     selected_symbol = GObject.Property(type=GObject.TYPE_PYOBJECT, nick="selected-symbol")
 
-    def __init__(self, preview_session, apply_func=apply_folders, reset_func=reset_folders, **kwargs):
+    def __init__(self, preview_session, apply_func=apply_folders, reset_func=reset_folders,
+                 plan_cleanup_func=plan_cleanup, run_cleanup_func=run_cleanup, **kwargs):
         """apply_func, reset_func: what Apply and Reset call, apply.apply_folders and apply.reset_folders
-        by default (stubs in tests and self-checks)."""
+        by default; plan_cleanup_func(), run_cleanup_func(paths): what Clean up calls, store.plan_cleanup
+        and store.run_cleanup by default (stubs in tests and self-checks)."""
         super().__init__(title=APP_TITLE, **kwargs)
         self._preview_session = preview_session
         self._apply_func, self._reset_func = apply_func, reset_func
+        self._plan_cleanup_func, self._run_cleanup_func = plan_cleanup_func, run_cleanup_func
+        self._warned = set()                      # manifest warnings already printed by Clean up
+        self._cleanup_action = Gio.SimpleAction.new("clean-up", None)
+        self._cleanup_action.connect("activate", lambda *_: self._on_cleanup())
+        self.add_action(self._cleanup_action)     # win.clean-up, the "Clean up…" item of the main menu
         self._dirs, self._recorded, self._busy = [], [], False
         self._symbols_dir = default_symbols_dir()
         self._symbols, self._gallery_header, self._gallery = [], None, None
@@ -62,7 +70,8 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
             min_sidebar_width=SIDEBAR_MIN_WIDTH, max_sidebar_width=SIDEBAR_MAX_WIDTH,
             content=self._build_content(self._symbols_dir), sidebar=sidebar,
         )
-        self.set_content(split)
+        self._toasts = Adw.ToastOverlay(child=split)    # the result of Clean up
+        self.set_content(self._toasts)
 
     def _build_content(self, symbols_dir):
         """The gallery pane: its header bar over the symbol grid, or over a status page when symbols_dir
@@ -142,6 +151,7 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         button.set_label(label)
         button.set_sensitive(sensitive)
         button.set_tooltip_text(tooltip)
+        self._cleanup_action.set_enabled(cleanup_enabled(self._busy))
 
     def _on_apply(self):
         """Apply what the panel shows now to the selected folders: close on success, else a dialog. The
@@ -194,10 +204,77 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         if outcome.close:
             self.close()
             return
+        self._recount()
+        self._show_outcome(outcome)
+
+    def _recount(self):
         manifest, _problem = read_manifest()              # the entries may have changed: recount for Reset
         self._recorded = recorded_folders(self._dirs, manifest)
         self._update_buttons()
-        self._show_outcome(outcome)
+
+    # ------------------------------------------------------------- Clean up
+    def _busy_call(self, call):
+        """(value, None) or (None, the exception) of call(), run synchronously with everything blocked."""
+        self._busy = True
+        self._update_buttons()
+        try:
+            return call(), None
+        except Exception as e:                            # every failure ends in a dialog, never a crash
+            if not isinstance(e, (ManifestError, OSError)):
+                traceback.print_exc()
+            return None, e
+        finally:
+            self._busy = False
+            self._update_buttons()
+
+    def _on_cleanup(self):
+        """Forget the manifest entries of folders that no longer exist (the rules of `prune`, folders
+        outside $HOME not checked): find them, ask, then remove the ones still missing. The window stays."""
+        if self._busy:
+            return
+        plan, error = self._busy_call(self._plan_cleanup_func)
+        if error is not None:
+            self._show_cleanup_outcome(cleanup_outcome(error=error))
+            return
+        for line in plan.warnings:                        # once per window, not on every click
+            if line not in self._warned:
+                self._warned.add(line)
+                print(f"folder-symbols: {line}", file=sys.stderr)
+        question = cleanup_dialog(plan)
+        dialog = Adw.AlertDialog(heading=question.heading, body=question.body)
+        if question.details:
+            dialog.set_extra_child(self._details(question.details))
+        if not question.confirm:
+            dialog.add_response("ok", "OK")
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+            dialog.present(self)
+            return
+        paths = tuple(e.folder for e in plan.stale)       # frozen; run_cleanup checks each one again
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("remove", "Remove")
+        dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", lambda _d, response: response == "remove" and self._cleanup(paths))
+        dialog.present(self)
+
+    def _cleanup(self, paths):
+        if self._busy:
+            return
+        result, error = self._busy_call(lambda: self._run_cleanup_func(list(paths)))
+        self._recount()
+        self._show_cleanup_outcome(cleanup_outcome(result, error))
+
+    def _show_cleanup_outcome(self, outcome):
+        if outcome.toast:
+            self._toasts.add_toast(Adw.Toast(title=outcome.toast))
+            return
+        dialog = Adw.AlertDialog(heading=outcome.title, body=outcome.body)
+        dialog.add_response("ok", "OK")
+        dialog.set_default_response("ok")
+        dialog.set_close_response("ok")
+        dialog.present(self)
 
     @staticmethod
     def _details(text):

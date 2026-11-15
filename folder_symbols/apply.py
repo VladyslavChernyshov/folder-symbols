@@ -388,12 +388,13 @@ def prune(a):
     with contextlib.nullcontext(store.load()) if a.dry_run else store.editing() as m:
         _warn(m)
         m.check_writable()
-        total = len(m.entries())
-        stale, unknown, skipped = store.stale_entries(m, a.include_external)
+        plan = store.cleanup_plan(m, a.include_external)
+        stale = [e.folder for e in plan.stale]
         if not a.dry_run:
-            m.remove_many(e.folder for e in stale)
-    for e in stale:
-        print(f"{'would remove' if a.dry_run else 'removed '}  {display_path(e.folder)}")
+            stale = store.remove_missing(m, stale)
+    total, unknown, skipped = plan.total, plan.unknown, plan.skipped
+    for folder in stale:
+        print(f"{'would remove' if a.dry_run else 'removed '}  {display_path(folder)}")
     for e, err in unknown:
         print(f"kept      {display_path(e.folder)}: cannot check ({err.strerror or err})")
     if skipped:
