@@ -176,6 +176,9 @@ a minute on a desktop PC.
   folder, but it is no longer in the manifest, so `list` and `reset --all` do not see it. Run
   `apply` again at the new location to bring it back under management.
 * A folder moved with `mv` in a terminal loses its icon, because GVfs is not told about the move.
+* After `apply` or `reset` (on the command line or in the window), Files may keep showing the old
+  icon until you refresh the folder view (F5). This comes from Files itself: folder-symbols does not
+  change the folder's modification time or anything else to force a refresh.
 * `reset --all` keeps the entry of a folder that does not exist (it may be on a drive that is not
   mounted), reports it as failed and exits with status 1. Run `folder-symbols reset PATH` to forget
   such an entry, or run `folder-symbols prune` to forget all such entries at once.
