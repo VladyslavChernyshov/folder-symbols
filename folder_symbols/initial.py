@@ -47,7 +47,7 @@ def resolve_symbol(recorded, by_name):
 
 
 def initial_state(dirs, manifest, symbols, symbols_dir=None):
-    """dirs: normalised folders (selection.normalise_paths); manifest: a store.Manifest or None;
+    """dirs: normalised folders (selection.resolve_selection(...).dirs); manifest: a store.Manifest or None;
     symbols: the gallery's Symbols; symbols_dir: only used in the message."""
     if manifest is None or not dirs:
         return InitialState()

@@ -108,13 +108,6 @@ def launch_argv(argv, local_path=None):
     return [argv[0], *selection.paths], None
 
 
-def normalise_paths(paths, local_path=None):
-    """Return (dirs, ignored_count): resolve_selection's folders as a list and the number of rejected
-    arguments. Duplicates and empty arguments do NOT increment ignored_count."""
-    selection = resolve_selection(paths, local_path)
-    return list(selection.dirs), len(selection.rejected)
-
-
 def tilde(path):
     """Format an absolute path replacing $HOME with ~."""
     home = os.path.expanduser("~")
@@ -128,7 +121,7 @@ def tilde(path):
 def panel_title(dirs):
     """Return the title of the sidebar header: the folder name or "N folders".
 
-    dirs – normalised existing directory list (output of normalise_paths), not empty: the window shows its
+    dirs – normalised existing directory list (resolve_selection(...).dirs), not empty: the window shows its
     welcome page, not the sidebar, until it has folders
     """
     if len(dirs) == 1:

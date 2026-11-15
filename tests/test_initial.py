@@ -12,7 +12,7 @@ from folder_symbols import store
 from folder_symbols.gallery import Symbol
 from folder_symbols.initial import (InitialState, initial_state, read_manifest, recorded_folders,
                                     resolve_symbol)
-from folder_symbols.selection import normalise_paths
+from folder_symbols.selection import resolve_selection
 from folder_symbols.store import Recipe
 
 ROOT = Path(__file__).parent.parent
@@ -30,7 +30,7 @@ def folders(isolated_home):
         for n in names:
             (isolated_home / n).mkdir(exist_ok=True)
             paths.append(str(isolated_home / n))
-        dirs, _ = normalise_paths(paths)
+        dirs = list(resolve_selection(paths).dirs)
         return dirs
     return make
 
@@ -235,7 +235,7 @@ def test_folder_outside_home_uses_an_absolute_key(tmp_path_factory, isolated_hom
     with open(store.manifest_path(), encoding="utf-8") as f:
         assert json.load(f)["folders"][0]["path"] == str(outside)
     manifest, _ = read_manifest()
-    dirs, _ = normalise_paths([str(outside)])
+    dirs = list(resolve_selection([str(outside)]).dirs)
     assert initial_state(dirs, manifest, SYMBOLS) == InitialState(STARRED, "olive")
 
 

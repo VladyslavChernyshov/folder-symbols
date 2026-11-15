@@ -11,7 +11,6 @@ ROOT = Path(__file__).parent.parent
 
 from folder_symbols.selection import (
     launch_argv,
-    normalise_paths,
     resolve_selection,
     selection_error,
     panel_title,
@@ -20,13 +19,14 @@ from folder_symbols.selection import (
 
 
 # ---------------------------------------------------------------------------
-# normalise_paths
+# resolve_selection: dirs and the number of rejected arguments
 # ---------------------------------------------------------------------------
 
 def test_plain_absolute_path(tmp_path):
     d = tmp_path / "alpha"
     d.mkdir()
-    dirs, ignored = normalise_paths([str(d)])
+    sel = resolve_selection([str(d)])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert dirs == [str(d)]
     assert ignored == 0
 
@@ -35,7 +35,8 @@ def test_plain_relative_path(tmp_path, monkeypatch):
     d = tmp_path / "beta"
     d.mkdir()
     monkeypatch.chdir(tmp_path)
-    dirs, ignored = normalise_paths(["beta"])
+    sel = resolve_selection(["beta"])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert dirs == [str(d)]
     assert ignored == 0
 
@@ -44,7 +45,8 @@ def test_file_uri(tmp_path):
     d = tmp_path / "gamma"
     d.mkdir()
     uri = "file://" + str(d)
-    dirs, ignored = normalise_paths([uri])
+    sel = resolve_selection([uri])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert dirs == [str(d)]
     assert ignored == 0
 
@@ -53,7 +55,8 @@ def test_percent_encoded_uri(tmp_path):
     d = tmp_path / "My Music"
     d.mkdir()
     encoded = "file://" + quote(str(d))
-    dirs, ignored = normalise_paths([encoded])
+    sel = resolve_selection([encoded])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert dirs == [str(d)]
     assert ignored == 0
 
@@ -61,13 +64,15 @@ def test_percent_encoded_uri(tmp_path):
 def test_file_ignored(tmp_path):
     f = tmp_path / "readme.txt"
     f.write_text("hello")
-    dirs, ignored = normalise_paths([str(f)])
+    sel = resolve_selection([str(f)])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert dirs == []
     assert ignored == 1
 
 
 def test_nonexistent_ignored(tmp_path):
-    dirs, ignored = normalise_paths([str(tmp_path / "does_not_exist")])
+    sel = resolve_selection([str(tmp_path / "does_not_exist")])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert dirs == []
     assert ignored == 1
 
@@ -76,7 +81,8 @@ def test_duplicate_silent(tmp_path):
     """Duplicate paths are dropped silently: ignored_count stays 0."""
     d = tmp_path / "delta"
     d.mkdir()
-    dirs, ignored = normalise_paths([str(d), str(d)])
+    sel = resolve_selection([str(d), str(d)])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert dirs == [str(d)]
     assert ignored == 0
 
@@ -86,13 +92,15 @@ def test_order_preserved(tmp_path):
     for n in names:
         (tmp_path / n).mkdir()
     paths = [str(tmp_path / n) for n in names]
-    dirs, ignored = normalise_paths(paths)
+    sel = resolve_selection(paths)
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert dirs == paths
     assert ignored == 0
 
 
 def test_empty_input():
-    dirs, ignored = normalise_paths([])
+    sel = resolve_selection([])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert dirs == []
     assert ignored == 0
 
@@ -101,7 +109,8 @@ def test_mixed_valid_and_invalid(tmp_path):
     d1 = tmp_path / "d1"; d1.mkdir()
     d2 = tmp_path / "d2"; d2.mkdir()
     f  = tmp_path / "f.txt"; f.write_text("x")
-    dirs, ignored = normalise_paths([str(d1), str(f), str(d2)])
+    sel = resolve_selection([str(d1), str(f), str(d2)])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert dirs == [str(d1), str(d2)]
     assert ignored == 1
 
@@ -113,12 +122,12 @@ def test_mixed_valid_and_invalid(tmp_path):
 def test_title_one_folder(isolated_home):
     music = isolated_home / "Music"
     music.mkdir()
-    dirs, _ = normalise_paths([str(music)])
+    dirs = list(resolve_selection([str(music)]).dirs)
     assert panel_title(dirs) == "Music"
 
 
 def test_title_home_itself(isolated_home):
-    dirs, _ = normalise_paths([str(isolated_home)])
+    dirs = list(resolve_selection([str(isolated_home)]).dirs)
     assert panel_title(dirs) == isolated_home.name
 
 
@@ -132,7 +141,7 @@ def test_title_several_folders(tmp_path):
         d = tmp_path / n
         d.mkdir()
         paths.append(str(d))
-    dirs, _ = normalise_paths(paths)
+    dirs = list(resolve_selection(paths).dirs)
     assert panel_title(dirs) == "3 folders"
 
 
@@ -140,20 +149,21 @@ def test_title_ignores_non_folders(tmp_path):
     d1 = tmp_path / "good1"; d1.mkdir()
     d2 = tmp_path / "good2"; d2.mkdir()
     f  = tmp_path / "bad.txt"; f.write_text("x")
-    dirs, _ = normalise_paths([str(d1), str(f), str(d2)])
+    dirs = list(resolve_selection([str(d1), str(f), str(d2)]).dirs)
     assert panel_title(dirs) == "2 folders"
 
 
 def test_normalise_all_ignored(tmp_path):
     f1 = tmp_path / "a.txt"; f1.write_text("x")
     f2 = tmp_path / "b.txt"; f2.write_text("x")
-    assert normalise_paths([str(f1), str(f2)]) == ([], 2)
+    sel = resolve_selection([str(f1), str(f2)])
+    assert (list(sel.dirs), len(sel.rejected)) == ([], 2)
 
 
 def test_title_duplicate(isolated_home):
     music = isolated_home / "Music"
     music.mkdir()
-    dirs, _ = normalise_paths([str(music), str(music)])
+    dirs = list(resolve_selection([str(music), str(music)]).dirs)
     assert panel_title(dirs) == "Music"
 
 
@@ -168,19 +178,22 @@ def test_tooltip_empty():
 def test_tooltip_single_under_home(isolated_home):
     jazz = isolated_home / "Music" / "Jazz"
     jazz.mkdir(parents=True)
-    dirs, ignored = normalise_paths([str(jazz)])
+    sel = resolve_selection([str(jazz)])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert panel_tooltip(dirs, len(dirs) + ignored) == "~/Music/Jazz"
 
 
 def test_tooltip_home_itself(isolated_home):
-    dirs, ignored = normalise_paths([str(isolated_home)])
+    sel = resolve_selection([str(isolated_home)])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert panel_tooltip(dirs, len(dirs) + ignored) == "~"
 
 
 def test_tooltip_outside_home_is_absolute(isolated_home, tmp_path_factory):
     outside = tmp_path_factory.mktemp("outside")
     assert not str(outside).startswith(str(isolated_home) + os.sep)
-    dirs, ignored = normalise_paths([str(outside)])
+    sel = resolve_selection([str(outside)])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert panel_tooltip(dirs, len(dirs) + ignored) == str(outside)
 
 
@@ -194,7 +207,8 @@ def test_tooltip_multiple(isolated_home):
         d = isolated_home / n
         d.mkdir()
         paths.append(str(d))
-    dirs, ignored = normalise_paths(paths)
+    sel = resolve_selection(paths)
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert panel_tooltip(dirs, len(dirs) + ignored) == "~/Aaa\n~/Bbb\n~/Ccc"
 
 
@@ -202,7 +216,8 @@ def test_tooltip_some_ignored(isolated_home):
     d1 = isolated_home / "good1"; d1.mkdir()
     d2 = isolated_home / "good2"; d2.mkdir()
     f  = isolated_home / "bad.txt"; f.write_text("x")
-    dirs, ignored = normalise_paths([str(d1), str(f), str(d2)])
+    sel = resolve_selection([str(d1), str(f), str(d2)])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert panel_tooltip(dirs, len(dirs) + ignored) == (
         "2 of 3 selected items are folders\n~/good1\n~/good2")
 
@@ -210,7 +225,8 @@ def test_tooltip_some_ignored(isolated_home):
 def test_tooltip_all_ignored(tmp_path):
     f1 = tmp_path / "a.txt"; f1.write_text("x")
     f2 = tmp_path / "b.txt"; f2.write_text("x")
-    dirs, ignored = normalise_paths([str(f1), str(f2)])
+    sel = resolve_selection([str(f1), str(f2)])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert panel_tooltip(dirs, len(dirs) + ignored) == "0 of 2 selected items are folders"
 
 
@@ -218,7 +234,8 @@ def test_tooltip_duplicate_no_ignored_line(isolated_home):
     """Passing the same folder twice must not add the 'X of Y' line."""
     music = isolated_home / "Music"
     music.mkdir()
-    dirs, ignored = normalise_paths([str(music), str(music)])
+    sel = resolve_selection([str(music), str(music)])
+    dirs, ignored = list(sel.dirs), len(sel.rejected)
     assert panel_tooltip(dirs, len(dirs) + ignored) == "~/Music"
 
 
@@ -329,7 +346,8 @@ def test_duplicates_merged_good_and_bad(tmp_path):
     assert s.dirs == (str(d),)
     assert s.rejected == ((str(missing), "not found"),)
     assert s.total == 2
-    assert normalise_paths([str(missing), str(missing)]) == ([], 1)
+    sel = resolve_selection([str(missing), str(missing)])
+    assert (list(sel.dirs), len(sel.rejected)) == ([], 1)
 
 
 def test_symlink_to_folder_kept_as_link(tmp_path):
@@ -412,7 +430,8 @@ def test_launch_argv_returns_resolved_paths(tmp_path, monkeypatch):
     argv, error = launch_argv(["prog", "a", str(f), "file://" + quote(str(b)), "a/"])
     assert error is None
     assert argv == ["prog", str(a), str(f), str(b)]
-    assert normalise_paths(argv[1:]) == ([str(a), str(b)], 1)
+    sel = resolve_selection(argv[1:])
+    assert (list(sel.dirs), len(sel.rejected)) == ([str(a), str(b)], 1)
 
 
 def test_gui_launcher_bad_paths_exit_1(tmp_path):
