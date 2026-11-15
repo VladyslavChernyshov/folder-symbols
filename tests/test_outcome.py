@@ -6,9 +6,10 @@ import sys
 import pytest
 
 from folder_symbols.apply import ApplyError, FolderResult, RecordError
-from folder_symbols.outcome import (RESET, CleanupDialog, CleanupOutcome, Outcome, apply_block_reason,
-                                    apply_outcome, apply_tooltip, cleanup_dialog, cleanup_enabled, cleanup_outcome,
-                                    reset_button_state, reset_confirmation, reset_outcome, summarize)
+from folder_symbols.outcome import (REFRESH_HINT, RESET, CleanupDialog, CleanupOutcome, Outcome,
+                                    apply_block_reason, apply_outcome, apply_tooltip, cleanup_dialog,
+                                    cleanup_enabled, cleanup_outcome, reset_button_state, reset_confirmation,
+                                    reset_outcome, summarize)
 from folder_symbols.store import CleanupPlan, CleanupResult, Entry, ManifestError, Recipe
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -113,8 +114,22 @@ def test_apply_block_reason(has_symbol, n_dirs, running, reason):
 
 
 def test_apply_tooltip():
-    assert apply_tooltip(1) == "Set this symbol and accent on the selected folder"
-    assert apply_tooltip(3) == "Set this symbol and accent on the 3 selected folders"
+    assert apply_tooltip(1) == ("Set this symbol and accent on the selected folder.\n"
+                                "Files may need a refresh (F5) to show the new icon.")
+    assert apply_tooltip(3) == ("Set this symbol and accent on the 3 selected folders.\n"
+                                "Files may need a refresh (F5) to show the new icon.")
+
+
+@pytest.mark.parametrize("n_dirs", [1, 2, 7])
+def test_apply_tooltip_ends_with_the_refresh_hint(n_dirs):
+    assert REFRESH_HINT == "Files may need a refresh (F5) to show the new icon."
+    assert apply_tooltip(n_dirs).splitlines()[-1] == REFRESH_HINT
+
+
+def test_only_the_active_apply_tooltip_has_the_refresh_hint():
+    reasons = {apply_block_reason(s, n, r) for s in (True, False) for n in (0, 1, 3) for r in (True, False)}
+    resets = {reset_button_state(n, k, r)[2] for n in (0, 1, 3) for k in range(n + 1) for r in (True, False)}
+    assert None in reasons and all("F5" not in t for t in (reasons | resets) - {None})
 
 
 def test_outcome_module_does_not_import_gi():

@@ -118,10 +118,15 @@ def apply_block_reason(has_symbol, n_dirs, running) -> Optional[str]:
     return None
 
 
+REFRESH_HINT = "Files may need a refresh (F5) to show the new icon."
+
+
 def apply_tooltip(n_dirs):
-    """The tooltip of the Apply button when it can be clicked."""
-    return ("Set this symbol and accent on the selected folder" if n_dirs == 1
-            else f"Set this symbol and accent on the {n_dirs} selected folders")
+    """The tooltip of the Apply button when it can be clicked: what it does, then REFRESH_HINT (Files
+    sometimes keeps showing the old icon until its view is refreshed)."""
+    what = ("Set this symbol and accent on the selected folder." if n_dirs == 1
+            else f"Set this symbol and accent on the {n_dirs} selected folders.")
+    return f"{what}\n{REFRESH_HINT}"
 
 
 def reset_button_state(n_dirs, n_recorded, running):
