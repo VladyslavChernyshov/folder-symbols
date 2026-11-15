@@ -110,10 +110,6 @@ def test_mixed_valid_and_invalid(tmp_path):
 # panel_title
 # ---------------------------------------------------------------------------
 
-def test_title_empty():
-    assert panel_title([]) == "No folder selected"
-
-
 def test_title_one_folder(isolated_home):
     music = isolated_home / "Music"
     music.mkdir()
@@ -148,11 +144,10 @@ def test_title_ignores_non_folders(tmp_path):
     assert panel_title(dirs) == "2 folders"
 
 
-def test_title_all_ignored(tmp_path):
+def test_normalise_all_ignored(tmp_path):
     f1 = tmp_path / "a.txt"; f1.write_text("x")
     f2 = tmp_path / "b.txt"; f2.write_text("x")
-    dirs, _ = normalise_paths([str(f1), str(f2)])
-    assert panel_title(dirs) == "No folder selected"
+    assert normalise_paths([str(f1), str(f2)]) == ([], 2)
 
 
 def test_title_duplicate(isolated_home):

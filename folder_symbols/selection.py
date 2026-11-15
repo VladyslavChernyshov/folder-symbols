@@ -126,12 +126,11 @@ def tilde(path):
 
 
 def panel_title(dirs):
-    """Return the title of the sidebar header: the folder name, "N folders", or "No folder selected".
+    """Return the title of the sidebar header: the folder name or "N folders".
 
-    dirs – normalised existing directory list (output of normalise_paths)
+    dirs – normalised existing directory list (output of normalise_paths), not empty: the window shows its
+    welcome page, not the sidebar, until it has folders
     """
-    if not dirs:
-        return "No folder selected"
     if len(dirs) == 1:
         return os.path.basename(dirs[0]) or dirs[0]
     return f"{len(dirs)} folders"

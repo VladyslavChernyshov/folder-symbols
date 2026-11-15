@@ -10,6 +10,7 @@ from folder_symbols.apply import apply_folders, reset_folders
 from folder_symbols.preview import PreviewSession
 from folder_symbols.store import plan_cleanup, run_cleanup
 from folder_symbols.selection import launch_argv, resolve_selection, selection_error
+from folder_symbols.gui.welcome import about_dialog
 from folder_symbols.gui.window import APP_TITLE, FolderSymbolsWindow
 
 APP_ID = "io.github.VladyslavChernyshov.FolderSymbols"
@@ -34,6 +35,9 @@ class FolderSymbolsApplication(Adw.Application):
     def do_startup(self):
         Adw.Application.do_startup(self)
         self._preview_session = PreviewSession()
+        about = Gio.SimpleAction.new("about", None)       # app.about, the "About" item of the main menu
+        about.connect("activate", lambda *_: self._window is not None and about_dialog().present(self._window))
+        self.add_action(about)
 
     def do_shutdown(self):
         if self._preview_session is not None:

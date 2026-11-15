@@ -138,23 +138,31 @@ def _cap_menu_height(button):
         print(f"folder-symbols: category menu height not limited ({e})", file=sys.stderr)
 
 
+def main_menu():
+    """The main menu, one model shared by the menu buttons of both window pages: "Clean up…" is the
+    window's action win.clean-up, "About" the application's action app.about."""
+    menu = Gio.Menu()
+    menu.append("Clean up…", "win.clean-up")
+    menu.append("About", "app.about")
+    return menu
+
+
+def menu_button(menu):
+    """The "≡" button that opens menu (main_menu())."""
+    return Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True, tooltip_text="Main Menu")
+
+
 class FolderHeader(Adw.Bin):
     """Header bar of the sidebar: the selected folder's name (or "N folders"), with the paths in its
-    tooltip, and the main menu. "Clean up…" is the window's action win.clean-up; "About" names an app
-    action that does not exist yet, so GTK shows it disabled."""
+    tooltip, and the main menu (main_menu()). It exists only once there are folders: set_selection is
+    called right after it is made."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, menu, **kwargs):
         super().__init__(**kwargs)
         self._title = Adw.WindowTitle()
-        menu = Gio.Menu()
-        menu.append("Clean up…", "win.clean-up")
-        menu.append("About", "app.about")
-        button = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True,
-                                tooltip_text="Main Menu")
         header = Adw.HeaderBar(title_widget=self._title)
-        header.pack_end(button)
+        header.pack_end(menu_button(menu))
         self.set_child(header)
-        self.set_selection([], 0)
 
     def set_selection(self, dirs, total):
         self._title.set_title(panel_title(dirs))

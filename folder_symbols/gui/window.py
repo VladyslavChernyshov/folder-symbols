@@ -9,6 +9,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GObject, Gtk
 
 from folder_symbols.apply import ApplyError, RecordError, apply_folders, reset_folders
+from folder_symbols.appinfo import APP_NAME, EMPTY_PAGE, MAIN_PAGE, page_for
 from folder_symbols.gallery import list_symbols
 from folder_symbols.initial import initial_state, read_manifest, recorded_folders
 from folder_symbols.outcome import (apply_block_reason, apply_outcome, apply_tooltip, cleanup_dialog,
@@ -17,10 +18,11 @@ from folder_symbols.outcome import (apply_block_reason, apply_outcome, apply_too
 from folder_symbols.store import ManifestError, plan_cleanup, run_cleanup
 from folder_symbols.symbols import default_symbols_dir
 from folder_symbols.gui.gallery import SymbolGallery
-from folder_symbols.gui.header import FolderHeader, GalleryHeader
+from folder_symbols.gui.header import FolderHeader, GalleryHeader, main_menu
 from folder_symbols.gui.preview import PreviewPanel
+from folder_symbols.gui.welcome import welcome_page
 
-APP_TITLE = "Folder Symbols"
+APP_TITLE = APP_NAME
 DEFAULT_SIZE = (850, 600)                # mockup .win
 SIDEBAR_WIDTH_FRACTION = 0.32            # about 270 px at 850 px (mockup .right)
 SIDEBAR_MIN_WIDTH = 220
@@ -48,13 +50,33 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         self._dirs, self._recorded, self._busy = [], [], False
         self._symbols_dir = default_symbols_dir()
         self._symbols, self._gallery_header, self._gallery = [], None, None
+        self._folder_header, self._panel = None, None
         self.set_default_size(*DEFAULT_SIZE)
 
+        # Two pages, switched once and one way (appinfo.page_for), so a Gtk.Stack without a switcher:
+        # the welcome page until the window has folders, then the main layout. The main layout is built
+        # only then: a window opened without folders never scans the symbols, and the gallery's search
+        # does not take the typing on the welcome page. Not homogeneous: each page has its own minimum.
+        self._menu = main_menu()                          # one model for both pages' menu buttons
+        self._stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.NONE,
+                                hhomogeneous=False, vhomogeneous=False)
+        self._stack.add_named(welcome_page(self._menu), EMPTY_PAGE)
+        self._update_buttons()
+        self._toasts = Adw.ToastOverlay(child=self._stack)    # the result of Clean up, on either page
+        self.set_content(self._toasts)
+
+    @property
+    def page(self):
+        """The name of the stack page shown: appinfo.EMPTY_PAGE or appinfo.MAIN_PAGE."""
+        return self._stack.get_visible_child_name()
+
+    def _build_main(self):
+        """The main layout: the gallery and the preview sidebar."""
         # Nautilus-style split (Adw.OverlaySplitView, libadwaita >= 1.4): the gallery on the left, the
         # preview sidebar on the right, never collapsed. Each pane has its own flat header bar, so the
         # gallery's header has the window's colour and the sidebar's the sidebar colour. Each header bar
         # shows only the window buttons on its window-edge side.
-        self._folder_header = FolderHeader()
+        self._folder_header = FolderHeader(self._menu)
         self._panel = PreviewPanel(self._preview_session)
         self.connect("notify::selected-symbol", lambda *_: self._on_symbol())
         self._panel.apply_button.connect("clicked", lambda *_: self._on_apply())
@@ -64,14 +86,12 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         sidebar.add_top_bar(self._folder_header)
         sidebar.set_content(self._panel)
 
-        split = Adw.OverlaySplitView(
+        return Adw.OverlaySplitView(
             sidebar_position=Gtk.PackType.END, collapsed=False, show_sidebar=True,
             sidebar_width_fraction=SIDEBAR_WIDTH_FRACTION,
             min_sidebar_width=SIDEBAR_MIN_WIDTH, max_sidebar_width=SIDEBAR_MAX_WIDTH,
             content=self._build_content(self._symbols_dir), sidebar=sidebar,
         )
-        self._toasts = Adw.ToastOverlay(child=split)    # the result of Clean up
-        self.set_content(self._toasts)
 
     def _build_content(self, symbols_dir):
         """The gallery pane: its header bar over the symbol grid, or over a status page when symbols_dir
@@ -120,7 +140,14 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         """Show a new folder selection: the sidebar header's title and tooltip, and the initial state from
         the manifest (read only): the recorded symbol selected and scrolled to, previewed in the recorded
         accent, or nothing selected. The search and the category are reset first, so the symbol can be
-        shown even when the previous filter would hide it."""
+        shown even when the previous filter would hide it. The first selection with folders builds the
+        main layout and shows it instead of the welcome page; a selection without folders changes
+        nothing (the launcher rejects those already)."""
+        if not dirs:
+            return
+        if page_for(dirs, self.page) == MAIN_PAGE and self._panel is None:
+            self._stack.add_named(self._build_main(), MAIN_PAGE)
+            self._stack.set_visible_child_name(MAIN_PAGE)
         self._folder_header.set_selection(dirs, total)
         self._dirs = list(dirs)
         manifest, problem = read_manifest()
@@ -142,6 +169,9 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         self._update_buttons()
 
     def _update_buttons(self):
+        self._cleanup_action.set_enabled(cleanup_enabled(self._busy))
+        if self._panel is None:                           # the welcome page: only the menu
+            return
         reason = apply_block_reason(self.selected_symbol is not None, len(self._dirs), self._busy)
         button = self._panel.apply_button
         button.set_sensitive(reason is None)
@@ -151,7 +181,6 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         button.set_label(label)
         button.set_sensitive(sensitive)
         button.set_tooltip_text(tooltip)
-        self._cleanup_action.set_enabled(cleanup_enabled(self._busy))
 
     def _on_apply(self):
         """Apply what the panel shows now to the selected folders: close on success, else a dialog. The
