@@ -11,6 +11,7 @@ ROOT = Path(__file__).parent.parent
 
 from folder_symbols.selection import (
     launch_argv,
+    listed_lines,
     resolve_selection,
     selection_error,
     panel_title,
@@ -449,3 +450,22 @@ def test_gui_launcher_bad_paths_exit_1(tmp_path):
                        env=env, capture_output=True, text=True, timeout=30)
     assert r.returncode == 1
     assert r.stderr == _error_lines(f"{missing}: not found") + "\n"
+
+
+# ---------------------------------------------------------------------------
+# listed_lines: the cap and "... and N more"
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("extra, indent", [(-3, ""), (0, ""), (1, ""), (5, ""), (-3, "  "), (0, "  "), (1, "  "), (5, "  ")])
+def test_listed_lines(extra, indent):
+    from folder_symbols.selection import MAX_LISTED
+    n = MAX_LISTED + extra
+    items = [f"p{i}" for i in range(n)]
+    want = [f"{indent}p{i}" for i in range(min(n, MAX_LISTED))]
+    if extra > 0:
+        want.append(f"{indent}... and {extra} more")
+    assert listed_lines(items, indent) == want
+
+
+def test_listed_lines_of_nothing():
+    assert listed_lines([]) == []

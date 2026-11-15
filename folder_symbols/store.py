@@ -49,6 +49,15 @@ def _home():
     return os.path.abspath(os.path.expanduser("~"))
 
 
+def tilde(path):
+    """A path written from ~ when it is in $HOME ($HOME itself is "~"), else unchanged. Follows
+    expanduser, which ignores a trailing slash of $HOME (the CLI's and the window's one rule)."""
+    home = os.path.expanduser("~")
+    if path == home:
+        return "~"
+    return "~/" + os.path.relpath(path, home) if path.startswith(home.rstrip("/") + "/") else path
+
+
 def folder_path(folder):
     """The absolute form used everywhere in this module (no symlinks resolved, like gio)."""
     return os.path.abspath(os.path.expanduser(folder))

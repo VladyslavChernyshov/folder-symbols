@@ -822,3 +822,39 @@ def test_following_entries_are_reset_and_pruned_like_pinned_ones(isolated_home, 
     assert [e.folder for e in store.entries()] == [a]
     cli.main(["reset", a])
     assert store.entries() == [] and a not in gio.icons
+
+
+# ---------------------------------------------------------------- tilde and shell_path (no Yaru)
+@pytest.mark.parametrize("home, path, want", [
+    ("/home/user", "/home/user", "~"),
+    ("/home/user", "/home/user/Music", "~/Music"),
+    ("/home/user", "/home/user/Music/Jazz", "~/Music/Jazz"),
+    ("/home/user", "/elsewhere/Music", "/elsewhere/Music"),
+    ("/home/user", "/home/user2", "/home/user2"),                     # a sibling is not under home
+    ("/home/user", "/home/user2/Music", "/home/user2/Music"),
+    ("/home/user/", "/home/user", "~"),                               # a trailing slash of $HOME is ignored
+    ("/home/user/", "/home/user/Music", "~/Music"),
+    ("/home/user//", "/home/user/Music/Jazz", "~/Music/Jazz"),
+    ("/home/user/", "/home/user2/Music", "/home/user2/Music"),
+    # HOME=/ is pinned to what the CLI printed before the path helpers were merged, not endorsed
+    ("/", "/", "~"),
+    ("/", "/home/x", "~/home/x"),
+])
+def test_tilde(monkeypatch, home, path, want):
+    monkeypatch.setenv("HOME", home)
+    assert store.tilde(path) == want
+
+
+@pytest.mark.parametrize("home, path, want", [
+    ("/home/user", "/home/user", "~"),
+    ("/home/user", "/home/user/Music", "~/Music"),
+    ("/home/user", "/home/user/My Files/it's", "~/'My Files/it'\"'\"'s'"),
+    ("/home/user", "/srv/My Files", "'/srv/My Files'"),
+    ("/home/user", "/srv/plain", "/srv/plain"),
+    ("/home/user/", "/home/user", "~"),
+    ("/home/user/", "/home/user/My Files/it's", "~/'My Files/it'\"'\"'s'"),
+    ("/home/user/", "/home/user2/My Files", "'/home/user2/My Files'"),
+])
+def test_shell_path(monkeypatch, home, path, want):
+    monkeypatch.setenv("HOME", home)
+    assert ap.shell_path(path) == want

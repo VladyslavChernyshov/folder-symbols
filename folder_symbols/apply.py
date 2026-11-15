@@ -46,21 +46,12 @@ def gio_custom_icon(folder):
 
 
 # ---------------------------------------------------------------- paths as the user sees them
-def display_path(path):
-    home = os.path.expanduser("~")
-    if path == home:
-        return "~"
-    return "~/" + os.path.relpath(path, home) if path.startswith(home.rstrip("/") + "/") else path
-
-
 def shell_path(path):
     """A path for a shell command, written from ~ when it is in $HOME and quoted where needed."""
-    home = os.path.expanduser("~")
-    if path == home:
-        return "~"
-    if path.startswith(home.rstrip("/") + "/"):
-        return "~/" + shlex.quote(os.path.relpath(path, home))
-    return shlex.quote(path)
+    short = store.tilde(path)
+    if short == path:
+        return shlex.quote(path)
+    return "~" if short == "~" else "~/" + shlex.quote(short[2:])
 
 
 def _warn(manifest):
@@ -280,7 +271,7 @@ def apply(a):
         cmd = ["gio", "set", folder, "metadata::custom-icon", "file://" + png]
         print(f"{theme_name}: {name} -> {png}")
         if not recipe:
-            print(f"warning: '{theme_name}' is not a Yaru variant, so {display_path(folder)} is not recorded "
+            print(f"warning: '{theme_name}' is not a Yaru variant, so {store.tilde(folder)} is not recorded "
                   "in the manifest ('list' and 'reset --all' will not see it)", file=sys.stderr)
         elif extra := _not_in_recipe(a):
             print(f"warning: the manifest keeps only symbol, accent, scale and align; not kept: "
@@ -288,7 +279,7 @@ def apply(a):
         if a.dry_run:
             print(" ".join(cmd))
             if recipe:
-                print(f"would record {display_path(folder)} in {m.path}")
+                print(f"would record {store.tilde(folder)} in {m.path}")
             return
         [result] = set_folder_icons(m, [folder], png, recipe)
         if not result.ok:
@@ -350,7 +341,7 @@ def reset(a):
         m.check_writable()
         if not os.path.exists(folder):
             if m.remove(folder):
-                print(f"{display_path(folder)}: folder not found; removed from the manifest")
+                print(f"{store.tilde(folder)}: folder not found; removed from the manifest")
                 return
             sys.exit(f"{folder}: no such folder")
         [result] = unset_folder_icons(m, [folder])
@@ -367,7 +358,7 @@ def reset_all(a):
         items = m.entries()
         results = unset_folder_icons(m, [e.folder for e in items])
         for r in results:
-            label = display_path(r.folder)
+            label = store.tilde(r.folder)
             if r.ok:
                 print(f"ok      {label}")
             elif r.message == NOT_FOUND:
@@ -394,9 +385,9 @@ def prune(a):
             stale = store.remove_missing(m, stale)
     total, unknown, skipped = plan.total, plan.unknown, plan.skipped
     for folder in stale:
-        print(f"{'would remove' if a.dry_run else 'removed '}  {display_path(folder)}")
+        print(f"{'would remove' if a.dry_run else 'removed '}  {store.tilde(folder)}")
     for e, err in unknown:
-        print(f"kept      {display_path(e.folder)}: cannot check ({err.strerror or err})")
+        print(f"kept      {store.tilde(e.folder)}: cannot check ({err.strerror or err})")
     if skipped:
         print(f"Skipped {skipped} {'entry' if skipped == 1 else 'entries'} outside ~ (the drive may not be "
               "mounted); use --include-external to check them too")
@@ -438,9 +429,9 @@ def list_folders(a):
         r = e.recipe
         opts = " ".join(([f"scale {r.scale:g}"] if r.scale != 1.0 else []) +
                         ([f"align {r.align}"] if r.align != "bbox" else [])) or "-"
-        sym = display_path(r.symbol) if os.path.isabs(r.symbol) else r.symbol
+        sym = store.tilde(r.symbol) if os.path.isabs(r.symbol) else r.symbol
         accent = (f"{r.accent} ({system})" if system else r.accent) if r.follows_system else r.accent
-        rows.append((display_path(e.folder), sym, accent, opts,
+        rows.append((store.tilde(e.folder), sym, accent, opts,
                      store.icon_status(e.folder, gio_custom_icon)))
     widths = [max(len(row[i]) for row in rows) for i in range(4)]
     for row in rows:

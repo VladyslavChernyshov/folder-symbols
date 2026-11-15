@@ -5,7 +5,7 @@ import stat
 from dataclasses import dataclass
 from urllib.parse import urlparse, unquote
 
-from folder_symbols.store import folder_path
+from folder_symbols.store import folder_path, tilde
 
 PROG = "folder-symbols-gui"
 MAX_LISTED = 10                     # rejected paths listed in the error before "... and N more"
@@ -76,6 +76,14 @@ def resolve_selection(args, local_path=None):
     return Selection(tuple(dirs), tuple(rejected), tuple(paths), empty)
 
 
+def listed_lines(items, indent=""):
+    """At most MAX_LISTED items, one per line, indented, then "... and N more" when there are more."""
+    lines = [f"{indent}{item}" for item in items[:MAX_LISTED]]
+    if len(items) > MAX_LISTED:
+        lines.append(f"{indent}... and {len(items) - MAX_LISTED} more")
+    return lines
+
+
 def selection_error(selection):
     """The launcher's error text when arguments were given but none is an existing folder, else None.
     The rejected paths are listed one per line, at most MAX_LISTED of them."""
@@ -84,11 +92,7 @@ def selection_error(selection):
     items = [f"{path}: {reason}" for path, reason in selection.rejected]
     if selection.empty:
         items.append('"": empty argument')
-    lines = [f"{PROG}: no existing folder among the given paths"]
-    lines += [f"  {item}" for item in items[:MAX_LISTED]]
-    if len(items) > MAX_LISTED:
-        lines.append(f"  ... and {len(items) - MAX_LISTED} more")
-    return "\n".join(lines)
+    return "\n".join([f"{PROG}: no existing folder among the given paths", *listed_lines(items, "  ")])
 
 
 def launch_argv(argv, local_path=None):
@@ -106,16 +110,6 @@ def launch_argv(argv, local_path=None):
     if error:
         return None, error
     return [argv[0], *selection.paths], None
-
-
-def tilde(path):
-    """Format an absolute path replacing $HOME with ~."""
-    home = os.path.expanduser("~")
-    if path == home:
-        return "~"
-    if path.startswith(home + os.sep):
-        return "~" + path[len(home):]
-    return path
 
 
 def panel_title(dirs):

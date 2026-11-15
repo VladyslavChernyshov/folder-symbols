@@ -7,8 +7,8 @@ import functools
 from typing import Optional
 
 from .apply import ApplyError, RecordError
-from .selection import MAX_LISTED, tilde
-from .store import ManifestError
+from .selection import listed_lines
+from .store import ManifestError, tilde
 
 
 @dataclasses.dataclass(frozen=True)
@@ -200,10 +200,7 @@ def cleanup_notes(plan):
 
 def listed(paths):
     """The paths from ~, one per line, at most MAX_LISTED of them, then "... and N more"."""
-    lines = [tilde(p) for p in paths[:MAX_LISTED]]
-    if len(paths) > MAX_LISTED:
-        lines.append(f"... and {len(paths) - MAX_LISTED} more")
-    return "\n".join(lines)
+    return "\n".join(listed_lines([tilde(p) for p in paths]))
 
 
 def cleanup_dialog(plan):

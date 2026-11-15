@@ -13,7 +13,6 @@ from typing import Optional
 
 from . import store
 from .gallery import Symbol
-from .selection import tilde
 from .symbols import symbol_name
 
 
@@ -58,7 +57,7 @@ def initial_state(dirs, manifest, symbols, symbols_dir=None):
         recipe = recipes.get(folder)
         symbol = recipe and resolve_symbol(recipe.symbol, by_name)
         if recipe and not symbol:
-            missing.append(f"{recipe.symbol} ({tilde(folder)})")
+            missing.append(f"{recipe.symbol} ({store.tilde(folder)})")
         found.append((symbol, recipe.accent) if symbol else None)
     message = None
     if missing:
