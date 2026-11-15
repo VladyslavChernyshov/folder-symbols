@@ -2,8 +2,7 @@
 """Folder Symbols GUI – GTK4/libadwaita application for setting custom folder icons.
 
 Thin wrapper around folder_symbols.gui. Requires PyGObject and GTK4/libadwaita bindings:
-  Ubuntu:   python3-gi  gir1.2-gtk-4.0  gir1.2-adw-1
-  openSUSE: python313-gobject  typelib-1_0-Gtk-4_0  typelib-1_0-Adw-1
+  Ubuntu packages: python3-gi  gir1.2-gtk-4.0  gir1.2-adw-1
 """
 import os, sys
 
@@ -13,9 +12,7 @@ try:
 except ImportError:
     sys.stderr.write(
         "folder-symbols-gui requires PyGObject and GTK4/libadwaita bindings.\n"
-        "  Ubuntu:   sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1\n"
-        "  openSUSE: sudo zypper install python313-gobject"
-        " typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1\n"
+        "  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1\n"
     )
     sys.exit(1)
 
