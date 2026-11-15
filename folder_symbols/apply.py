@@ -5,7 +5,7 @@ import contextlib, dataclasses, hashlib, json, os, re, shlex, subprocess, sys
 from . import accents, store, yaru
 from .store import SYSTEM_ACCENT, Recipe
 from .svg import make_svg_for
-from .symbols import YARU_SYMBOLS, find_symbols, load_overrides, symbol_name
+from .symbols import YARU_SYMBOLS, effective_params, find_symbols, load_overrides, symbol_name
 from .yaru import Theme, builtin_themes, compose, find_theme_dir, render_symbol
 
 
@@ -180,8 +180,8 @@ def write_icon(theme_dir, theme_name, svg, store_dir, ov, scale=1.0, align="bbox
     else:
         path = os.path.join(store_dir, base + ".png")
         theme = Theme(theme_dir, (size,))
-        compose(theme, render_symbol(svg, size, scale * ov.get("scale", 1.0), not keep_opacity),
-                size, ov.get("align", align), ov.get("dx", 0.0), ov.get("dy", 0.0)).save(path, optimize=True)
+        scale, align, dx, dy = effective_params(ov, scale, align)
+        compose(theme, render_symbol(svg, size, scale, not keep_opacity), size, align, dx, dy).save(path, optimize=True)
     return path
 
 

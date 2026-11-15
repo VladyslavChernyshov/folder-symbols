@@ -342,6 +342,42 @@ def test_apply_svg_by_name_dry_run(tmp_path, svg):
     assert (tmp_path / "s" / "Yaru-purple-dark-sq.svg").exists()
 
 
+@pytest.mark.parametrize("ov, offset, expected", [
+    ({}, (None, None), (0.9, "mass", 0.0, 0.0)),                                    # no entry
+    ({"scale": 1.5}, (None, None), (0.9 * 1.5, "mass", 0.0, 0.0)),                  # scale only
+    ({"align": "yaru"}, (None, None), (0.9, "yaru", 0.0, 0.0)),                     # align only
+    ({"dx": 0.03}, (None, None), (0.9, "mass", 0.03, 0.0)),                         # dx only
+    ({"dy": -0.02}, (None, None), (0.9, "mass", 0.0, -0.02)),                       # dy only
+    ({"scale": 0.7, "align": "bbox", "dx": 0.01, "dy": -0.02}, (None, None),        # all keys
+     (0.9 * 0.7, "bbox", 0.01, -0.02)),
+    ({}, (0.1, -0.05), (0.9, "mass", 0.1, -0.05)),                                  # caller offset, no entry
+    ({"dx": 0.02, "dy": 0.03}, (0.1, -0.05), (0.9, "mass", 0.1 + 0.02, -0.05 + 0.03)),  # additive
+    ({"dx": 0.02}, (0.1, 0.0), (0.9, "mass", 0.1 + 0.02, 0.0)),                     # caller dy, no entry dy
+    ({"scale": 0}, (None, None), (0.0, "mass", 0.0, 0.0)),                          # falsy values are used
+    ({"align": ""}, (None, None), (0.9, "", 0.0, 0.0)),
+    ({"dx": 0, "dy": 0.0}, (None, None), (0.9, "mass", 0, 0.0)),
+    ({"align": None, "dx": None}, (None, None), (0.9, None, None, 0.0)),             # None passes through
+])
+def test_effective_params(g, ov, offset, expected):
+    got = g.effective_params(ov, 0.9, "mass", *offset)
+    assert got == expected                                    # same float operations, so exact
+    assert [type(v) for v in got] == [type(v) for v in expected]
+
+
+def test_effective_params_keeps_the_entry_value_without_caller_offset(g):
+    """dx/dy None: the entry's value object is returned as it is (no arithmetic), as before the helper."""
+    dx, dy = object(), object()
+    assert g.effective_params({"dx": dx, "dy": dy}, 1.0, "bbox")[2:] == (dx, dy)
+    assert g.effective_params({"dx": dx}, 1.0, "bbox")[2] is dx
+
+
+def test_effective_params_bad_scale_fails_like_before(g):
+    with pytest.raises(TypeError, match=r"'float' and 'NoneType'"):
+        g.effective_params({"scale": None}, 1.0, "bbox")
+    with pytest.raises(TypeError, match=r"'float' and 'NoneType'"):              # caller dx + None, as `one` did
+        g.effective_params({"dx": None}, 1.0, "bbox", 0.0, 0.0)
+
+
 @pytest.mark.parametrize("extra, args", [
     (["--overrides", "OV", "--scale", "0.9", "--keep-opacity"], (0.9 * 0.7, "yaru", 0.01, -0.02, False)),
     (["--overrides", "OV", "--no-overrides", "--scale", "0.9"], (0.9, "bbox", 0.0, 0.0, True)),

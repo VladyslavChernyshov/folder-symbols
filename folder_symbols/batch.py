@@ -2,7 +2,7 @@
 import os, sys
 
 from .svg import make_svg
-from .symbols import find_symbols, load_overrides
+from .symbols import effective_params, find_symbols, load_overrides
 from .yaru import NO_SYMBOL, SIZE_DIRS, Theme, builtin_themes, compose, installed_themes, render_symbol, \
     size_dir
 
@@ -25,8 +25,7 @@ def _work(job):
             if o["skip_existing"] and os.path.exists(dest):
                 continue
             try:
-                txt = make_svg(tdir, svg, o["scale"] * ov.get("scale", 1.0), ov.get("align", o["align"]),
-                               ov.get("dx", 0.0), ov.get("dy", 0.0), o["solid"])
+                txt = make_svg(tdir, svg, *effective_params(ov, o["scale"], o["align"]), o["solid"])
             except Exception as e:
                 return name, done, f"svg failed: {e}"
             os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -35,7 +34,8 @@ def _work(job):
             done += 1
     for size in _G["sizes"]:
         try:
-            sym = render_symbol(svg, size, o["scale"] * ov.get("scale", 1.0), o["solid"])
+            scale, align, dx, dy = effective_params(ov, o["scale"], o["align"])
+            sym = render_symbol(svg, size, scale, o["solid"])
         except Exception as e:
             return name, 0, f"render failed: {e}"
         for tname, theme in _G["themes"].items():
@@ -43,8 +43,7 @@ def _work(job):
             if o["skip_existing"] and os.path.exists(dest):
                 continue
             try:
-                img = compose(theme, sym, size, ov.get("align", o["align"]),
-                              ov.get("dx", 0.0), ov.get("dy", 0.0))
+                img = compose(theme, sym, size, align, dx, dy)
             except ValueError as e:
                 return name, done, str(e)
             os.makedirs(os.path.dirname(dest), exist_ok=True)

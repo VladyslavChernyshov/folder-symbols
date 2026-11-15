@@ -25,6 +25,15 @@ def load_overrides(path=None):
         return {k: v for k, v in json.load(f).items() if not k.startswith("_")}
 
 
+def effective_params(ov, scale, align, dx=None, dy=None):
+    """(scale, align, dx, dy) for a symbol with overrides entry `ov` ({} for none): its scale multiplies
+    `scale`, its align wins over `align`, its dx/dy are added to `dx`/`dy`. dx/dy None: the caller has no
+    offset of its own, so the entry's value (default 0.0) is used as it is."""
+    return (scale * ov.get("scale", 1.0), ov.get("align", align),
+            ov.get("dx", 0.0) if dx is None else dx + ov.get("dx", 0.0),
+            ov.get("dy", 0.0) if dy is None else dy + ov.get("dy", 0.0))
+
+
 def find_symbols(root, pattern):
     """name -> svg path; skips broken symlinks and duplicate names."""
     found = {}

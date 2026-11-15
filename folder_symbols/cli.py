@@ -6,7 +6,7 @@ from .apply import apply, list_folders, prune, reset, reset_all
 from .batch import batch
 from .store import SYSTEM_ACCENT, ManifestError
 from .svg import make_svg
-from .symbols import YARU_SYMBOLS, load_overrides
+from .symbols import YARU_SYMBOLS, effective_params, load_overrides
 from .yaru import Theme, accents, builtin_themes, compose, render_symbol, theme_ref_kind
 
 
@@ -18,14 +18,13 @@ def one(a):
             sys.exit(f"theme '{a.theme_dir}' not found: give a theme directory or a built-in name "
                      f"({', '.join(sorted(builtin_themes()))})")
         with open(a.output_png, "w", encoding="utf-8") as f:
-            f.write(make_svg(a.theme_dir, a.symbol_svg, a.scale * ov.get("scale", 1.0),
-                             ov.get("align", a.align), a.dx + ov.get("dx", 0.0),
-                             a.dy + ov.get("dy", 0.0), not a.keep_opacity))
+            f.write(make_svg(a.theme_dir, a.symbol_svg, *effective_params(ov, a.scale, a.align, a.dx, a.dy),
+                             not a.keep_opacity))
         return
     theme = Theme(a.theme_dir, (a.size,))
-    sym = render_symbol(a.symbol_svg, a.size, a.scale * ov.get("scale", 1.0), not a.keep_opacity)
-    compose(theme, sym, a.size, ov.get("align", a.align), a.dx + ov.get("dx", 0.0),
-            a.dy + ov.get("dy", 0.0)).save(a.output_png, optimize=True)
+    scale, align, dx, dy = effective_params(ov, a.scale, a.align, a.dx, a.dy)
+    sym = render_symbol(a.symbol_svg, a.size, scale, not a.keep_opacity)
+    compose(theme, sym, a.size, align, dx, dy).save(a.output_png, optimize=True)
 
 
 OVERVIEW = """\
