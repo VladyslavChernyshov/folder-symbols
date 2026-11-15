@@ -223,9 +223,10 @@ def svg_data(ref):
 # ---------------------------------------------------------------- installed themes
 def installed_themes(root):
     """Names of the Yaru* theme directories with PNG folders in `root` (sorted)."""
-    return sorted(d for d in os.listdir(root) if os.path.isdir(root)
-                  and d.startswith("Yaru") and os.path.isdir(f"{root}/{d}/{SIZE_DIRS[-1]}/places")) \
-        if os.path.isdir(root) else []
+    if not os.path.isdir(root):
+        return []
+    return sorted(d for d in os.listdir(root)
+                  if d.startswith("Yaru") and os.path.isdir(f"{root}/{d}/{SIZE_DIRS[-1]}/places"))
 
 
 def find_theme_dir(name, roots):

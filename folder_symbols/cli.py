@@ -64,7 +64,7 @@ _FMT = argparse.HelpFormatter
 _SIZES = "512 (= 256x256@2x, default), 256 (= 256x256) or a Yaru size directory such as 48x48 or 24x24@2x"
 
 
-def _common(p, batch=False):
+def _common(p):
     """Options shared by every command that renders a symbol."""
     p.add_argument("--scale", type=float, default=1.0, metavar="X",
                    help="multiply the symbol's size by X (1.0 = Yaru's size; the symbol is still "
@@ -237,7 +237,7 @@ def parser_batch():
                    help="only symbols whose name matches this regular expression, e.g. '^(share|folder)'")
     p.add_argument("--jobs", type=int, default=os.cpu_count(), metavar="N",
                    help="parallel worker processes. Default: number of CPUs")
-    _common(p, batch=True)
+    _common(p)
     p.add_argument("--skip-existing", action="store_true",
                    help="do not regenerate files that already exist (resume an interrupted run)")
     return p

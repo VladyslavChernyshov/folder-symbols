@@ -277,14 +277,14 @@ def apply(a):
         ov = {} if a.no_overrides else load_overrides(a.overrides).get(name, {})
         png = write_icon(theme_dir, theme_name, svg, store_dir, ov, a.scale, a.align, a.keep_opacity,
                          a.format, a.size)
-        cmd =["gio", "set", folder, "metadata::custom-icon", "file://" + png]
+        cmd = ["gio", "set", folder, "metadata::custom-icon", "file://" + png]
         print(f"{theme_name}: {name} -> {png}")
         if not recipe:
             print(f"warning: '{theme_name}' is not a Yaru variant, so {display_path(folder)} is not recorded "
                   "in the manifest ('list' and 'reset --all' will not see it)", file=sys.stderr)
-        elif _not_in_recipe(a):
+        elif extra := _not_in_recipe(a):
             print(f"warning: the manifest keeps only symbol, accent, scale and align; not kept: "
-                  f"{', '.join(_not_in_recipe(a))}", file=sys.stderr)
+                  f"{', '.join(extra)}", file=sys.stderr)
         if a.dry_run:
             print(" ".join(cmd))
             if recipe:

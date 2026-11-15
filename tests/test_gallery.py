@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from conftest import SYMBOLS_DIR
-from folder_symbols.gallery import (Symbol, categories, category_tooltip, filter_symbols, list_symbols,
-                                    search_placeholder)
+from folder_symbols.gallery import (Symbol, categories, category_tooltip, list_symbols,
+                                    matches, search_placeholder)
 from folder_symbols.symbols import default_symbols_dir, YARU_SYMBOLS
 
 ROOT = Path(__file__).parent.parent
@@ -84,7 +84,7 @@ def test_missing_directory(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# categories and filter_symbols
+# categories and matches
 # ---------------------------------------------------------------------------
 
 SYMS = [
@@ -102,31 +102,31 @@ def test_categories_sorted_unique():
 
 
 def test_filter_empty_query_matches_all():
-    assert filter_symbols(SYMS, "", None) == SYMS
-    assert filter_symbols(SYMS, "   ", None) == SYMS
+    assert [s for s in SYMS if matches(s, "", None)] == SYMS
+    assert [s for s in SYMS if matches(s, "   ", None)] == SYMS
 
 
 def test_filter_by_query():
-    assert names(filter_symbols(SYMS, "folder", None)) == ["folder", "folder-music"]
+    assert names([s for s in SYMS if matches(s, "folder", None)]) == ["folder", "folder-music"]
 
 
 def test_filter_query_case_insensitive_and_stripped():
-    assert names(filter_symbols(SYMS, "  EDIT-p ", None)) == ["Edit-Paste"]
-    assert names(filter_symbols(SYMS, "edit", None)) == ["edit-copy", "Edit-Paste"]
+    assert names([s for s in SYMS if matches(s, "  EDIT-p ", None)]) == ["Edit-Paste"]
+    assert names([s for s in SYMS if matches(s, "edit", None)]) == ["edit-copy", "Edit-Paste"]
 
 
 def test_filter_by_category():
-    assert names(filter_symbols(SYMS, "", "places")) == ["folder", "folder-music"]
+    assert names([s for s in SYMS if matches(s, "", "places")]) == ["folder", "folder-music"]
 
 
 def test_filter_by_query_and_category():
-    assert names(filter_symbols(SYMS, "o", "devices")) == ["camera-photo"]
-    assert filter_symbols(SYMS, "folder", "actions") == []
+    assert names([s for s in SYMS if matches(s, "o", "devices")]) == ["camera-photo"]
+    assert [s for s in SYMS if matches(s, "folder", "actions")] == []
 
 
 def test_filter_no_matches():
-    assert filter_symbols(SYMS, "zzz", None) == []
-    assert filter_symbols(SYMS, "", "nonexistent") == []
+    assert [s for s in SYMS if matches(s, "zzz", None)] == []
+    assert [s for s in SYMS if matches(s, "", "nonexistent")] == []
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ def test_placeholder_all_categories():
 
 def test_placeholder_counts_the_category():
     assert search_placeholder(SYMS, "places") == "Search 2 symbols in places…"
-    assert search_placeholder(SYMS, "actions") == f"Search {len(filter_symbols(SYMS, '', 'actions'))} symbols in actions…"
+    assert search_placeholder(SYMS, "actions") == f"Search {len([s for s in SYMS if matches(s, '', 'actions')])} symbols in actions…"
 
 
 def test_placeholder_singular():

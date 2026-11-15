@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from folder_symbols import accents, yaru
+from folder_symbols import yaru
 from folder_symbols.accents import (MATE, PICKER_ORDER, AccentChoice, PanelChoice, accent_label, apply_choice,
-                                    initial_accent, initial_choice, initial_follow, panel_choice, pick,
+                                    initial_choice, initial_follow, panel_choice, pick,
                                     picker_accents, set_follow, swatch_colors, swatch_tooltip, system_accent,
                                     system_changed)
 from folder_symbols.store import SYSTEM_ACCENT
@@ -73,15 +73,6 @@ def test_system_accent_when_gsettings_fails(monkeypatch):
     assert system_accent() is None                      # conftest's gsettings stub exits with an error
     monkeypatch.setenv("PATH", "/nonexistent")          # gsettings missing altogether
     assert system_accent() is None
-
-
-@pytest.mark.parametrize("recorded, system, expected", [
-    ("purple", "sage", "purple"), ("mate", None, "mate"), (None, "sage", "sage"),
-    ("nosuch", "sage", "sage"), (None, None, "orange"), ("nosuch", None, "orange"), (None, "nosuch", "orange"),
-    ("system", "sage", "sage"), ("system", None, "orange"),     # a following folder previews the system's
-])
-def test_initial_accent(recorded, system, expected):
-    assert initial_accent(recorded, system) == expected
 
 
 def test_accents_module_does_not_import_gi():

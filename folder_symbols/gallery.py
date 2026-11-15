@@ -39,10 +39,6 @@ def matches(symbol, query, category):
     return query.strip().casefold() in symbol.name.casefold()
 
 
-def filter_symbols(symbols, query, category):
-    return [s for s in symbols if matches(s, query, category)]
-
-
 def search_placeholder(symbols, category):
     """Placeholder of the search entry, with the number of symbols the search runs over:
     "Search 1323 symbols…" for all categories (category None), "Search 87 symbols in apps…" for one."""

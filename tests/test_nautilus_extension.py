@@ -1,7 +1,6 @@
 """Tests for nautilus/folder_symbols_nautilus.py with fake gi/Nautilus modules (no GTK, no Yaru, no real process)."""
 import ast
 import importlib.util
-import os
 import subprocess
 import sys
 import types

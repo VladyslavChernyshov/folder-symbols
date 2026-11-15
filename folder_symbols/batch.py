@@ -18,7 +18,7 @@ def _work(job):
     name, svg = job
     o = _G["opts"]
     ov = o["overrides"].get(name, {})
-    done = skipped = 0
+    done = 0
     if _G["svg"]:
         for tname, tdir in _G["tdirs"].items():
             dest = os.path.join(o["out"], tname, "scalable", f"{name}.svg")
@@ -41,7 +41,6 @@ def _work(job):
         for tname, theme in _G["themes"].items():
             dest = os.path.join(o["out"], tname, str(size), f"{name}.png")
             if o["skip_existing"] and os.path.exists(dest):
-                skipped += 1
                 continue
             try:
                 img = compose(theme, sym, size, ov.get("align", o["align"]),

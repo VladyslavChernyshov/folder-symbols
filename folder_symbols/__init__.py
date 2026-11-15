@@ -9,5 +9,13 @@ Modules:
   apply    setting / removing a folder's custom icon with gio, list, reset --all, prune
   store    the local store: manifest.json (one recipe per folder) and the generated icons
   cli      argument parsers and main()
+  accents  the accent picker's data and its follow-the-system state (no GTK)
+  appinfo  the welcome page texts, the About dialog data and which page the window shows (no GTK)
+  gallery  the symbol gallery's data: listing, categories, filtering (no GTK)
+  initial  the window's initial state for a folder selection, from the manifest only (no GTK)
+  outcome  what the window does after Apply or Reset (no GTK)
+  preview  the GUI's folder preview, built as an SVG in a temporary directory (no GTK)
+  selection  launch path normalisation and the sidebar header text (no GTK)
+  gui      the GTK4/libadwaita window; the only subpackage that imports GTK
 """
 __version__ = "0.2.0"   # the one place the version lives; tag releases as v<__version__>

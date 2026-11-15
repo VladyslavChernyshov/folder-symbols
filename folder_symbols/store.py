@@ -320,11 +320,6 @@ def statuses(get_icon, path=None, icons=None):
     return [(e, icon_status(e.folder, get_icon, icons)) for e in entries(path)]
 
 
-def folders_with_icon(get_icon, path=None, icons=None):
-    """Entries whose folder exists and still shows the icon from our store."""
-    return [e for e, s in statuses(get_icon, path, icons) if s == "ok"]
-
-
 def is_external(folder):
     """True for a folder outside $HOME (stored with an absolute path; its drive may not be mounted)."""
     return os.path.isabs(folder_key(folder))

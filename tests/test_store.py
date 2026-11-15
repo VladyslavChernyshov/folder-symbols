@@ -362,7 +362,6 @@ def test_list_shows_the_status_of_each_folder(isolated_home, gio, sym, capsys, t
     assert lines[0].split() == ["FOLDER", "SYMBOL", "ACCENT", "OPTIONS", "STATUS"]
     status = {line.split()[0]: line.split("  ")[-1].strip() for line in lines[1:]}
     assert status == {"~/Ok": "ok", "~/Gone": "missing", "~/Other": "other icon", "~/None": "no icon"}
-    assert store.folders_with_icon(ap.gio_custom_icon) == [store.lookup(ok)]
 
 
 def test_list_with_nothing_recorded(isolated_home, gio, capsys):

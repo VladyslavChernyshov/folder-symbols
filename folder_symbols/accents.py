@@ -50,14 +50,6 @@ def system_accent():
     return v[0] if v else None
 
 
-def initial_accent(recorded, system):
-    """The accent selected when a folder selection is shown: the folders' recorded one when it is a known
-    accent, else the system's, else DEFAULT_ACCENT."""
-    if recorded in yaru.accents():
-        return recorded
-    return system if system in yaru.accents() else DEFAULT_ACCENT
-
-
 # ------------------------------------------------------------- following the system accent
 @dataclasses.dataclass(frozen=True)
 class AccentChoice:
