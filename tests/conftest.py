@@ -12,9 +12,9 @@ SYMBOLS_DIR = os.environ.get("YARU_SYMBOLS_DIR", os.path.join(ICONS_ROOT, "Yaru"
 
 def _load():
     """All names of the folder_symbols modules in one namespace, so tests can write g.compose etc."""
-    from folder_symbols import apply, batch, cli, engine, svg, symbols, yaru
+    from folder_symbols import apply, batch, cli, commands, engine, svg, symbols, yaru
     ns = {}
-    for m in (engine, yaru, symbols, svg, batch, apply, cli):
+    for m in (engine, yaru, symbols, svg, batch, apply, commands, cli):
         ns.update({k: v for k, v in vars(m).items() if not k.startswith("__")})
     return types.SimpleNamespace(**ns)
 

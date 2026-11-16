@@ -2,7 +2,7 @@
 import argparse, os, sys
 
 from . import __version__
-from .apply import apply, list_folders, prune, reset, reset_all
+from .commands import apply, list_folders, prune, reset, reset_all
 from .batch import batch
 from .store import SYSTEM_ACCENT, ManifestError
 from .svg import make_svg

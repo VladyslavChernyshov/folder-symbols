@@ -3,7 +3,7 @@ Everything runs in the temporary home of the isolated_home fixture; gio and gset
 import json, os, shlex, types
 import pytest
 
-from folder_symbols import apply as ap, cli, store, yaru
+from folder_symbols import apply as ap, cli, commands, store, yaru
 from folder_symbols.store import SYSTEM_ACCENT, ManifestError, Recipe
 
 SQUARE = '<rect x="3" y="3" width="10" height="10" fill="#222"/>'
@@ -867,4 +867,4 @@ def test_tilde(monkeypatch, home, path, want):
 ])
 def test_shell_path(monkeypatch, home, path, want):
     monkeypatch.setenv("HOME", home)
-    assert ap.shell_path(path) == want
+    assert commands.shell_path(path) == want

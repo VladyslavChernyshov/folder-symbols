@@ -6,7 +6,8 @@ Modules:
   symbols  finding *-symbolic.svg files and the per-symbol overrides.json
   svg      the scalable (SVG) output
   batch    many symbols x themes x sizes in parallel
-  apply    setting / removing a folder's custom icon with gio, list, reset --all, prune
+  apply    setting / removing folders' custom icons with gio and recording them (the library the window uses)
+  commands the CLI's manifest commands: apply, reset, list, prune (print and exit)
   store    the local store: manifest.json (one recipe per folder) and the generated icons
   cli      argument parsers and main()
   accents  the accent picker's data and its follow-the-system state (no GTK)
