@@ -18,7 +18,8 @@ def svg_units(svg):
     (e.g. 4.2333, millimetre grids) - the nominal width/height wins. Symbols with no
     width/height and a viewBox far from 16 (8, 64) are normalised so their long side is 16.
     """
-    head = open(svg, encoding="utf-8", errors="ignore").read(3000)
+    with open(svg, encoding="utf-8", errors="ignore") as f:
+        head = f.read(3000)
     tag = (re.search(r"<svg\b[^>]*>", head, re.S) or [""])[0]
     num = lambda k: (lambda m: float(m.group(1)) if m else None)(
         re.search(r'\s%s="\s*([\d.]+)' % k, tag))
@@ -45,7 +46,8 @@ def _render(svg, px, symbol_frac, scale, solid):
     uw, uh = svg_units(svg)
     unit = symbol_frac * scale * px * SS / 16.0
     w, h = max(1, round(uw * unit)), max(1, round(uh * unit))
-    text = open(svg, encoding="utf-8", errors="ignore").read()
+    with open(svg, encoding="utf-8", errors="ignore") as f:
+        text = f.read()
     if solid:
         text = strip_opacity(text)
     out = subprocess.run(["rsvg-convert", "-w", str(w), "-h", str(h)],

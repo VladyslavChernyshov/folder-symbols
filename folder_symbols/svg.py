@@ -3,13 +3,14 @@ import re
 
 from .engine import SS, ink_center, strip_opacity, svg_units
 from .symbols import effective_params
-from .yaru import DUMMY_ACCENT, DUMMY_DARK, EMBOSS, INK_CENTER, SYMBOL_PX, render_symbol, svg_data, \
-    template_path, template_text
+from .yaru import EMBOSS, INK_CENTER, SYMBOL_DEFS, SYMBOL_LAYERS, SYMBOL_PX, render_symbol, svg_data, \
+    template_for
 
 
 def _symbol_markup(svg, solid):
     """Contents of the symbol SVG (ids prefixed to avoid clashes) and its viewBox."""
-    text = open(svg, encoding="utf-8", errors="ignore").read()
+    with open(svg, encoding="utf-8", errors="ignore") as f:
+        text = f.read()
     if solid:
         text = strip_opacity(text)
     root = re.search(r"<svg\b[^>]*>", text, re.S).group(0)
@@ -27,7 +28,6 @@ def _symbol_markup(svg, solid):
 def make_svg(theme_ref, symbol_svg, scale=1.0, align="bbox", dx=0.0, dy=0.0, solid=True):
     """A single scalable SVG: Yaru's folder in this theme variant with the symbol embossed on it.
     theme_ref: a theme directory, or the name of a built-in variant such as 'Yaru-dark'."""
-    theme_dir = theme_ref
     data = svg_data(theme_ref)
     sym, eff = render_symbol(symbol_svg, 256, scale, solid, with_scale=True)
     cx, cy = ink_center(sym, align)                      # mask px; at size 256, 1 user unit = SS px
@@ -41,7 +41,6 @@ def make_svg(theme_ref, symbol_svg, scale=1.0, align="bbox", dx=0.0, dy=0.0, sol
     k = min(cw / vw, ch / vh)                            # viewBox -> canvas, preserveAspectRatio meet
     px_, py_ = (cw - vw * k) / 2 - vx * k, (ch - vh * k) / 2 - vy * k
     t = EMBOSS * 256
-    tpl = template_path(theme_dir)
     d1, d2 = data["d1"], data["d2"]
     f = lambda v: ("%.4f" % v).rstrip("0").rstrip(".")
     box = 'maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256"'
@@ -60,19 +59,13 @@ def make_svg(theme_ref, symbol_svg, scale=1.0, align="bbox", dx=0.0, dy=0.0, sol
 <rect width="256" height="256" fill="{d2}" mask="url(#fs-m-body)"/>
 <rect width="256" height="256" fill="{d1}" mask="url(#fs-m-inner)"/>
 </g>"""
-    text = open(tpl, encoding="utf-8").read()
-    if data["colors"]:
-        text = text.replace(DUMMY_ACCENT, data["colors"][0]).replace(DUMMY_DARK, data["colors"][1])
-    return text.replace("<!--SYMBOL-DEFS-->", defs).replace("<!--SYMBOL-LAYERS-->", layers)
+    return template_for(theme_ref, data).replace(SYMBOL_DEFS, defs).replace(SYMBOL_LAYERS, layers)
 
 
 def make_plain_svg(theme_ref):
     """Yaru's folder in this theme variant without a symbol (e.g. a built-in name such as 'Yaru-sage')."""
     data = svg_data(theme_ref)
-    text = template_text(theme_ref)
-    if data["colors"]:
-        text = text.replace(DUMMY_ACCENT, data["colors"][0]).replace(DUMMY_DARK, data["colors"][1])
-    return text
+    return template_for(theme_ref, data).replace(SYMBOL_DEFS, "").replace(SYMBOL_LAYERS, "")
 
 
 def make_svg_for(theme_ref, symbol_svg, overrides, scale=1.0, align="bbox", keep_opacity=False):

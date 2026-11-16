@@ -146,6 +146,19 @@ def test_plain_svg_of_light_mate_is_its_fixed_drawing():
     assert make_plain_svg("Yaru-mate") == yaru.template_text("Yaru-mate")
 
 
+@pytest.mark.parametrize("variant", ["Yaru", "Yaru-sage-dark", "Yaru-mate", "Yaru-mate-dark"])
+def test_template_for_has_the_colours_and_keeps_the_markers(variant):
+    data = yaru.svg_data(variant)
+    text = yaru.template_for(variant, data)
+    assert yaru.SYMBOL_DEFS in text and yaru.SYMBOL_LAYERS in text
+    assert yaru.DUMMY_ACCENT not in text and yaru.DUMMY_DARK not in text
+    if data["colors"]:
+        assert data["colors"][0] in text and data["colors"][1] in text
+    # the plain SVG is the same text with the markers stripped; the symbol-less template is unchanged
+    assert make_plain_svg(variant) == text.replace(yaru.SYMBOL_DEFS, "").replace(yaru.SYMBOL_LAYERS, "")
+    assert yaru.template_text(variant).replace(yaru.DUMMY_ACCENT, "").count("SYMBOL-") == 0
+
+
 def test_build_plain_writes_into_the_session_dir_only(session):
     path = session.build_plain("Yaru-purple")
     assert os.path.dirname(path) == session.dir

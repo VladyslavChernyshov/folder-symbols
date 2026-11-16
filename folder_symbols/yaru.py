@@ -106,6 +106,7 @@ def compose(theme, sym, size, align="bbox", dx=0.0, dy=0.0):
 TEMPLATE = os.path.join(ROOT, "assets", "folder-template.svg")
 TEMPLATE_MATE = os.path.join(ROOT, "assets", "folder-template-mate.svg")
 DUMMY_ACCENT, DUMMY_DARK = "#00ff03", "#008502"      # Yaru's dummy colours in the template
+SYMBOL_DEFS, SYMBOL_LAYERS = "<!--SYMBOL-DEFS-->", "<!--SYMBOL-LAYERS-->"    # where the symbol goes in the template
 THEMES_JSON = os.path.join(os.path.dirname(TEMPLATE), "themes.json")
 
 
@@ -114,9 +115,22 @@ def template_path(theme_dir):
     return TEMPLATE_MATE if os.path.basename(os.path.normpath(theme_dir)) == "Yaru-mate" else TEMPLATE
 
 
+def _read_template(theme_dir=None):
+    with open(template_path(theme_dir) if theme_dir else TEMPLATE, encoding="utf-8") as f:
+        return f.read()
+
+
 def template_text(theme_dir=None):
-    t = open(template_path(theme_dir) if theme_dir else TEMPLATE, encoding="utf-8").read()
-    return t.replace("<!--SYMBOL-DEFS-->", "").replace("<!--SYMBOL-LAYERS-->", "")
+    return _read_template(theme_dir).replace(SYMBOL_DEFS, "").replace(SYMBOL_LAYERS, "")
+
+
+def template_for(ref, data):
+    """The folder template with this variant's colours (data: svg_data(ref)) and the symbol markers
+    still in place; the caller fills or strips them."""
+    t = _read_template(ref)
+    if data["colors"]:
+        t = t.replace(DUMMY_ACCENT, data["colors"][0]).replace(DUMMY_DARK, data["colors"][1])
+    return t
 
 
 @functools.lru_cache(maxsize=None)
