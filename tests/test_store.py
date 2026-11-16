@@ -588,22 +588,32 @@ def test_plan_cleanup_of_an_empty_manifest(isolated_home):
 
 def test_plan_cleanup_finds_missing_skips_external_and_keeps_unknown(isolated_home, tmp_path):
     (isolated_home / "Drive").symlink_to(tmp_path / "unmounted")
-    locked = isolated_home / "Locked"
-    (locked / "inner").mkdir(parents=True)
     gone = [str(isolated_home / n) for n in ("A", "B", "C")]
-    unknown = [str(isolated_home / "Drive" / "X"), str(locked / "inner" / "Gone")]
+    unknown = [str(isolated_home / "Drive" / "X")]
     external = str(tmp_path / "drive" / "Photos")
     recorded(*gone, *unknown, external, folder(isolated_home, "Keep"), str(isolated_home))
-    locked.chmod(0)
-    try:
-        plan, wide = store.plan_cleanup(), store.plan_cleanup(include_external=True)
-    finally:
-        locked.chmod(0o755)
+    plan, wide = store.plan_cleanup(), store.plan_cleanup(include_external=True)
     assert [e.folder for e in plan.stale] == gone
     assert sorted(e.folder for e, _err in plan.unknown) == sorted(unknown)
     assert all(isinstance(err, OSError) for _e, err in plan.unknown)
-    assert (plan.skipped, plan.total) == (1, 8)
+    assert (plan.skipped, plan.total) == (1, 7)
     assert {e.folder for e in wide.stale} == {*gone, external} and wide.skipped == 0
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read any file")
+def test_plan_cleanup_keeps_a_folder_it_has_no_permission_to_check(isolated_home):
+    locked = isolated_home / "Locked"
+    (locked / "inner").mkdir(parents=True)
+    gone, hidden = str(isolated_home / "A"), str(locked / "inner" / "Gone")
+    recorded(gone, hidden)
+    locked.chmod(0)
+    try:
+        plan = store.plan_cleanup()
+    finally:
+        locked.chmod(0o755)
+    assert [e.folder for e in plan.stale] == [gone]
+    assert [e.folder for e, _err in plan.unknown] == [hidden]
+    assert all(isinstance(err, PermissionError) for _e, err in plan.unknown)
 
 
 def test_plan_cleanup_reports_unusable_entries_as_warnings(isolated_home):
