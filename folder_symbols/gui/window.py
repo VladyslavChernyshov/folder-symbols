@@ -59,7 +59,7 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         # does not take the typing on the welcome page. Not homogeneous: each page has its own minimum.
         self._menu = main_menu()                          # one model for both pages' menu buttons
         self._stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.NONE,
-                                hhomogeneous=False, vhomogeneous=False)
+                                hhomogeneous=False, vhomogeneous=False, name="page-stack")
         self._stack.add_named(welcome_page(self._menu), EMPTY_PAGE)
         self._update_buttons()
         self._toasts = Adw.ToastOverlay(child=self._stack)    # the result of Clean up, on either page
@@ -77,7 +77,7 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         # gallery's header has the window's colour and the sidebar's the sidebar colour. Each header bar
         # shows only the window buttons on its window-edge side.
         self._folder_header = FolderHeader(self._menu)
-        self._panel = PreviewPanel(self._preview_session)
+        self._panel = PreviewPanel(self._preview_session, name="preview-panel")
         self.connect("notify::selected-symbol", lambda *_: self._on_symbol())
         self._panel.apply_button.connect("clicked", lambda *_: self._on_apply())
         self._panel.reset_button.connect("clicked", lambda *_: self._on_reset())
@@ -97,7 +97,7 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         """The gallery pane: its header bar over the symbol grid, or over a status page when symbols_dir
         has no symbols. The divider under the header while the grid is scrolled is the ToolbarView's."""
         symbols, problem = self._load_symbols(symbols_dir)
-        header = self._gallery_header = GalleryHeader(symbols)
+        header = self._gallery_header = GalleryHeader(symbols, name="gallery-header")
         header.search.set_key_capture_widget(self)      # typing anywhere in the window starts the search
         view = Adw.ToolbarView()
         view.add_top_bar(header)
@@ -105,7 +105,7 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
             view.set_content(self._no_symbols(problem))
             return view
         self._symbols = symbols
-        gallery = self._gallery = SymbolGallery(symbols)
+        gallery = self._gallery = SymbolGallery(symbols, name="gallery")
         gallery.bind_property("selected-symbol", self, "selected-symbol", GObject.BindingFlags.SYNC_CREATE)
         update = lambda *_: gallery.set_filter(header.query, header.category or None)
         header.connect("notify::query", update)
@@ -133,7 +133,7 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
             description=f"{reason}\n\nInstall yaru-theme-icon or point YARU_SYMBOLS_DIR at a folder with "
                         "*-symbolic.svg files.",
             icon_name="dialog-warning-symbolic",
-            vexpand=True,
+            vexpand=True, name="no-symbols-page",
         )
 
     def update_selection(self, dirs, total):

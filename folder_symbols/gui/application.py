@@ -1,4 +1,5 @@
 """FolderSymbolsApplication: Adw.Application subclass."""
+import os
 import sys
 
 import gi
@@ -14,6 +15,13 @@ from folder_symbols.gui.welcome import about_dialog
 from folder_symbols.gui.window import APP_TITLE, FolderSymbolsWindow
 
 APP_ID = "io.github.VladyslavChernyshov.FolderSymbols"
+APP_ID_ENV = "FOLDER_SYMBOLS_APP_ID"     # another application id, for the GUI harness (tools/gui_check)
+
+
+def _app_id():
+    """$FOLDER_SYMBOLS_APP_ID when it is a valid application id, else APP_ID."""
+    value = os.environ.get(APP_ID_ENV)
+    return value if value and Gio.Application.id_is_valid(value) else APP_ID
 
 
 class FolderSymbolsApplication(Adw.Application):
@@ -23,7 +31,7 @@ class FolderSymbolsApplication(Adw.Application):
         apply.reset_folders by default; plan_cleanup_func, run_cleanup_func: what Clean up calls,
         store.plan_cleanup and store.run_cleanup by default (stubs in self-checks)."""
         super().__init__(
-            application_id=APP_ID,
+            application_id=_app_id(),
             flags=Gio.ApplicationFlags.HANDLES_OPEN,
         )
         GLib.set_application_name(APP_TITLE)

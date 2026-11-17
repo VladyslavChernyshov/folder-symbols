@@ -19,7 +19,7 @@ def welcome_page(menu):
     view = Adw.ToolbarView()
     view.add_top_bar(header)
     view.set_content(Adw.StatusPage(icon_name=WELCOME.icon_name, title=WELCOME.title,
-                                    description=WELCOME.description, vexpand=True))
+                                    description=WELCOME.description, vexpand=True, name="welcome-status"))
     return view
 
 

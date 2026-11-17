@@ -58,7 +58,7 @@ class PreviewPanel(Gtk.Box):
         self._drawn_dark = Adw.StyleManager.get_default().get_dark()
         # hexpand centres the image along the box; vexpand would propagate and stretch the box downwards.
         self._image = Gtk.Image(pixel_size=PREVIEW_ICON_SIZE, hexpand=True,
-                                halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+                                halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER, name="preview-image")
         box = Gtk.Box(css_classes=["preview-box"])
         box.append(self._image)
         self.append(box)
@@ -68,8 +68,9 @@ class PreviewPanel(Gtk.Box):
         self.append(self._picker)
         # The buttons at the bottom right (mock7 .btns): Reset, then Apply, the suggested action.
         buttons = Gtk.Box(spacing=BUTTON_GAP, halign=Gtk.Align.END, valign=Gtk.Align.END, vexpand=True)
-        self.reset_button = Gtk.Button(label="Reset", sensitive=False)
-        self.apply_button = Gtk.Button(label="Apply", css_classes=["suggested-action"], sensitive=False)
+        self.reset_button = Gtk.Button(label="Reset", sensitive=False, name="reset-button")
+        self.apply_button = Gtk.Button(label="Apply", css_classes=["suggested-action"], sensitive=False,
+                                       name="apply-button")
         buttons.append(self.reset_button)
         buttons.append(self.apply_button)
         self.append(buttons)

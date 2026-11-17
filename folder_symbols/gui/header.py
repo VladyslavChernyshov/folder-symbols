@@ -48,12 +48,12 @@ class GalleryHeader(Adw.Bin):
         controls = Gtk.WindowControls(side=Gtk.PackType.START)
         controls.bind_property("empty", controls, "visible",
                                GObject.BindingFlags.SYNC_CREATE | GObject.BindingFlags.INVERT_BOOLEAN)
-        self.search = Gtk.SearchEntry(hexpand=True)
+        self.search = Gtk.SearchEntry(hexpand=True, name="search-entry")
         self.search.connect("search-changed", lambda entry: self.set_property("query", entry.get_text()))
         self._button_icon = Gtk.Image()
         self._button = Adw.SplitButton(child=self._button_icon, action_name="gallery.show-all",
                                        dropdown_tooltip="Choose a category",
-                                       menu_model=self._category_menu(categories(symbols)))
+                                       menu_model=self._category_menu(categories(symbols)), name="category-button")
         self._button.connect("notify::popover", lambda button, _pspec: _cap_menu_height(button))
         _cap_menu_height(self._button)
         if not symbols:
@@ -149,7 +149,8 @@ def main_menu():
 
 def menu_button(menu):
     """The "≡" button that opens menu (main_menu())."""
-    return Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True, tooltip_text="Main Menu")
+    return Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True, tooltip_text="Main Menu",
+                          name="main-menu-button")
 
 
 class FolderHeader(Adw.Bin):
@@ -159,7 +160,7 @@ class FolderHeader(Adw.Bin):
 
     def __init__(self, menu, **kwargs):
         super().__init__(**kwargs)
-        self._title = Adw.WindowTitle()
+        self._title = Adw.WindowTitle(name="folder-title")
         header = Adw.HeaderBar(title_widget=self._title)
         header.pack_end(menu_button(menu))
         self.set_child(header)

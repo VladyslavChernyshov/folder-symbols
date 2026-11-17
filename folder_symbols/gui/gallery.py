@@ -105,7 +105,7 @@ class SymbolGallery(Gtk.Box):
         factory.connect("setup", self._on_setup)
         factory.connect("bind", self._on_bind)
         self._grid = grid = Gtk.GridView(model=self._selection, factory=factory, min_columns=2, max_columns=12,
-                            css_classes=["symbol-gallery"])
+                            css_classes=["symbol-gallery"], name="gallery-grid")
         # No margins here: the insets are the grid's CSS padding. The overlay scrollbar floats over the
         # padding, so it neither moves cells nor changes the number of columns.
         scroller = Gtk.ScrolledWindow(child=grid, hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True,
@@ -115,6 +115,7 @@ class SymbolGallery(Gtk.Box):
             title="No symbols match",
             description="Try another name or category.",
             icon_name="edit-find-symbolic",
+            name="gallery-empty",
         )
         self._stack = Gtk.Stack(vexpand=True)
         self._stack.add_named(scroller, "grid")

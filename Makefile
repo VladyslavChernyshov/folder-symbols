@@ -19,6 +19,8 @@ K          ?=
 # where nautilus-python looks for per-user extensions
 NAUTILUS_EXT_DIR ?= $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/nautilus-python/extensions
 NAUTILUS_EXT     := folder_symbols_nautilus.py
+# extra arguments of the GUI harness, e.g. GUI_CHECK_ARGS="-k A5 --display session"
+GUI_CHECK_ARGS   ?=
 
 .DEFAULT_GOAL := help
 .PHONY: help deps \
@@ -27,7 +29,7 @@ NAUTILUS_EXT     := folder_symbols_nautilus.py
         release \
         screenshot social-preview themes-json \
         cli-help clean \
-        app nautilus-install nautilus-uninstall
+        app gui-check nautilus-install nautilus-uninstall
 
 help: ## Show this list
 	@awk 'BEGIN {FS = ":.*## "} \
@@ -97,6 +99,9 @@ themes-json: ## Rebuild assets/themes.json after a Yaru update (then run `make t
 ##@ GUI
 app: ## Run the GUI app; PATHS= accepts space-separated folder paths, e.g. make app PATHS="$$HOME/Music"
 	./folder-symbols-gui $(PATHS)
+
+gui-check: ## Drive the real window with stub backends and check it (local only; GUI_CHECK_ARGS="-k A5 --display session")
+	$(PYTHON) tools/gui_check $(GUI_CHECK_ARGS)
 
 ##@ Nautilus (development)
 nautilus-install: ## Symlink the "Choose Icon…" extension into your Nautilus extensions (then: nautilus -q)
