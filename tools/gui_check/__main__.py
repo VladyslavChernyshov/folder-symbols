@@ -11,8 +11,9 @@ Each scenario runs in its own process (child.py) with an environment built from 
   - a private dbus-daemon of its own (no service directories, socket under the run directory; required);
   - a random test application id;
   - stub `gio` and `gsettings` commands;
-  - the harness's own Xvfb (--display xvfb, the default) or your screen (--display session: a warning,
-    a notification and a 5 s wait before each window).
+  - the harness's own Xvfb (--display xvfb, the default: no warning, no notification) or your screen
+    (--display session: ONE warning line, one notification and one 5 s wait before the first window, and
+    one "finished" line and notification when the run ends).
 Every process the harness starts dies with its parent (pdeath_exec.py). After each scenario and at the end,
 /proc is scanned for processes left behind.
 
@@ -48,7 +49,11 @@ PDEATH = os.path.join(HERE, "pdeath_exec.py")
 CHILD = os.path.join(HERE, "child.py")
 MARKER = "GUI_CHECK_RUN"
 NOT_RUN = "NOT RUN"
-WARNING = "Opening the window for a visual check in 5 seconds, please do not touch the keyboard or mouse"
+WARNING_FMT = ("Opening {n} windows for a visual check, about {t} seconds in total, please do not touch the "
+               "keyboard or mouse until the finished message")
+FINISHED = "Visual check finished, you can use the keyboard and mouse again"
+PAUSE = 5                            # seconds of waiting once, before the first window on the user's screen
+SECONDS_PER_WINDOW = 3               # estimate with a margin (the slowest measured window on Xvfb takes 1.3 s)
 SOCKET_MAX = 107                     # sun_path holds 108 bytes with the final NUL
 STARTUP_TIMEOUT = 10                 # seconds for Xvfb and dbus-daemon to report their address
 GSETTINGS_ALLOWED = "gsettings get org.gnome.desktop.interface icon-theme"
@@ -254,6 +259,9 @@ class Run:
         self.real_bus = RealBus()
         self.preflight_shown = False
         self.windows_opened = 0
+        self.windows_planned = 0
+        self.announced = False           # the pre-launch warning was given (session mode, once per run)
+        self.finished_sent = False
         self.tools = {}                  # name -> absolute path, looked up in TOOLS_PATH
 
     # ------------------------------------------------------------- processes
@@ -417,8 +425,8 @@ class Run:
                              "; windows appear on your screen")
             self.tools["notify-send"] = shutil.which("notify-send", path=TOOLS_PATH)
             if self.tools["notify-send"] is None:
-                self.info.append(f"notify-send not found in {TOOLS_PATH}: the warning before each window is "
-                                 "printed only")
+                self.info.append(f"notify-send not found in {TOOLS_PATH}: the warning before the first window "
+                                 "and the finished message are printed only")
 
     @staticmethod
     def check_safe_path(path):
@@ -509,15 +517,28 @@ class Run:
                     env[key] = os.environ[key]
         return env, source
 
-    def warn_before_window(self):
-        say(WARNING)
+    def notify(self, text):
+        say(text)
         if self.tools.get("notify-send"):
             try:
-                subprocess.run([self.tools["notify-send"], "Folder Symbols GUI check", WARNING], timeout=5,
+                subprocess.run([self.tools["notify-send"], "Folder Symbols GUI check", text], timeout=5,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except (OSError, subprocess.SubprocessError):
                 pass
-        time.sleep(5)                     # the required pause before a window appears on your screen
+
+    def warn_before_windows(self):
+        """Once per session-mode run: the warning, one notification, one 5 s pause."""
+        n = self.windows_planned
+        total = -(-(n * SECONDS_PER_WINDOW + PAUSE) // 5) * 5        # rounded up to a multiple of 5
+        self.announced = True
+        self.notify(WARNING_FMT.format(n=n, t=total))
+        time.sleep(PAUSE)                 # the required pause before a window appears on your screen
+
+    def announce_finished(self):
+        """The end-of-run message; only after a warning was given, and only once."""
+        if self.announced and not self.finished_sent:
+            self.finished_sent = True
+            self.notify(FINISHED)
 
     def real_bus_reply(self, ready):
         """The real-bus check while a child is up: no *GuiCheck* name, the real id's owner unchanged."""
@@ -556,8 +577,8 @@ class Run:
             r, w = os.pipe()
             cr, cw = os.pipe()
             env, _source = self.child_env(sc, sdir, address, w, cr)
-            if sc.opens_window and self.args.display == "session":
-                self.warn_before_window()
+            if sc.opens_window and self.args.display == "session" and not self.announced:
+                self.warn_before_windows()
             if sc.opens_window:
                 self.windows_opened += 1
             started = time.monotonic()
@@ -795,8 +816,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="gui_check", description=__doc__.split("\n\n")[0])
     p.add_argument("-k", action="append", help="scenario ids or parts of ids, comma-separated")
     p.add_argument("--display", choices=DISPLAY_MODES, default=os.environ.get("GUI_CHECK_DISPLAY", "xvfb"),
-                   help="where the windows open (default: $GUI_CHECK_DISPLAY, else xvfb); session warns and waits "
-                   "5 s before each window")
+                   help="where the windows open (default: $GUI_CHECK_DISPLAY, else xvfb); session warns once, "
+                   "waits 5 s once before the first window and says when the run is finished; xvfb is silent")
     p.add_argument("--symbols", choices=("auto", "yaru", "fixture"), default="auto")
     p.add_argument("--self-test", action="store_true", help="run the harness's own self-tests (Z)")
     p.add_argument("--list", action="store_true", help="list the scenarios and exit")
@@ -828,9 +849,12 @@ def main(argv=None):
 
     run = Run(args)
     atexit.register(run.cleanup)
+    atexit.register(run.announce_finished)       # backstop for any other way out; sends at most once
+    run.windows_planned = sum(1 for s in chosen if s.opens_window)
 
     def on_signal(signum, _frame):
         run.cleanup()
+        run.announce_finished()
         say(f"gui_check: stopped by {signal.Signals(signum).name}; every process of this run was stopped; "
             f"kept {run.dir}")
         os._exit(130 if signum == signal.SIGINT else 143)
@@ -862,6 +886,7 @@ def main(argv=None):
             res = run.run_scenario(sc)
         except SetupError as e:                  # the scenario's private bus did not start
             run.cleanup()
+            run.announce_finished()
             say(f"gui_check: {sc.id}: {e}")
             say(f"gui_check: the harness cannot run; kept {run.dir}")
             return EXIT_SETUP
@@ -870,6 +895,7 @@ def main(argv=None):
         if stops_further_windows(res):
             stopped = (f"the window of {sc.id} was closed by the user ({res.verdict})" if res.user_closed
                        else f"{sc.id} {res.verdict}")
+    run.announce_finished()
     run.finish_checks()
     for line in run.info:
         say(f"info: {line}")
