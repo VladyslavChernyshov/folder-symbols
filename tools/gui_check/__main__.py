@@ -13,7 +13,8 @@ Each scenario runs in its own process (child.py) with an environment built from 
   - stub `gio` and `gsettings` commands;
   - the harness's own Xvfb (--display xvfb, the default: no warning, no notification) or your screen
     (--display session: ONE warning line, one notification and one 5 s wait before the first window, and
-    one "finished" line and notification when the run ends).
+    one "finished" line and notification when the run ends). A session run has only the A scenarios unless
+    others are given by exact id with -k (-k B1, not -k B).
 Every process the harness starts dies with its parent (pdeath_exec.py). After each scenario and at the end,
 /proc is scanned for processes left behind.
 
@@ -30,6 +31,7 @@ import select
 import shlex
 import shutil
 import signal
+import stat
 import string
 import subprocess
 import sys
@@ -49,7 +51,7 @@ PDEATH = os.path.join(HERE, "pdeath_exec.py")
 CHILD = os.path.join(HERE, "child.py")
 MARKER = "GUI_CHECK_RUN"
 NOT_RUN = "NOT RUN"
-WARNING_FMT = ("Opening {n} windows for a visual check, about {t} seconds in total, please do not touch the "
+WARNING_FMT = ("Opening {n} {windows} for a visual check, about {t} seconds in total, please do not touch the "
                "keyboard or mouse until the finished message")
 FINISHED = "Visual check finished, you can use the keyboard and mouse again"
 PAUSE = 5                            # seconds of waiting once, before the first window on the user's screen
@@ -131,9 +133,18 @@ printf '%s\\n' "gio $*" >> {log}
 echo "gio is disabled by the GUI harness" >&2
 exit 99
 """
+# The icon theme it reports is the content of $GUI_CHECK_ICON_THEME_FILE (a file in the scenario directory that a
+# scenario writes to emulate another system accent), or 'Yaru' while that file does not exist.
 GSETTINGS_STUB = """#!/bin/sh
 printf '%s\\n' "gsettings $*" >> {log}
-if [ "$*" = "get org.gnome.desktop.interface icon-theme" ]; then echo "'Yaru'"; exit 0; fi
+if [ "$*" = "get org.gnome.desktop.interface icon-theme" ]; then
+  if [ -n "$GUI_CHECK_ICON_THEME_FILE" ] && [ -f "$GUI_CHECK_ICON_THEME_FILE" ]; then
+    printf "'%s'\\n" "$(cat "$GUI_CHECK_ICON_THEME_FILE")"
+  else
+    echo "'Yaru'"
+  fi
+  exit 0
+fi
 echo "gsettings: only 'get org.gnome.desktop.interface icon-theme' is allowed by the GUI harness" >&2
 exit 99
 """
@@ -153,6 +164,38 @@ def signal_name(number):
         return signal.Signals(number).name
     except ValueError:
         return f"signal {number}"
+
+
+def warning_seconds(n):
+    """The time the warning announces for n windows: n * SECONDS_PER_WINDOW plus the pause, rounded up to a
+    multiple of 5."""
+    return -(-(n * SECONDS_PER_WINDOW + PAUSE) // 5) * 5
+
+
+def warning_text(n):
+    """The pre-launch warning for n windows ("1 window", "7 windows")."""
+    return WARNING_FMT.format(n=n, windows="window" if n == 1 else "windows", t=warning_seconds(n))
+
+
+def restore_permissions(top):
+    """Give the owner read and write access (and search on directories) to every entry under top that lacks
+    it (B5 makes the manifest unreadable), so the run directory can always be read and removed. Symbolic
+    links are skipped (chmod would follow them)."""
+    for dirpath, dirs, files in os.walk(top):
+        for name in dirs + files:
+            path = os.path.join(dirpath, name)
+            try:
+                st = os.lstat(path)
+            except OSError:
+                continue
+            if stat.S_ISLNK(st.st_mode):
+                continue
+            need = stat.S_IRUSR | stat.S_IWUSR | (stat.S_IXUSR if stat.S_ISDIR(st.st_mode) else 0)
+            if st.st_mode & need != need:
+                try:
+                    os.chmod(path, stat.S_IMODE(st.st_mode) | need)
+                except OSError:
+                    pass
 
 
 def random_suffix(n=10):
@@ -463,6 +506,16 @@ class Run:
         os.close(w)
         return p, self.read_line_from(r, p, "dbus-daemon", log)
 
+    def symbols_dir_of(self, sc, sdir):
+        """YARU_SYMBOLS_DIR of the scenario: the real or the fixture set, or (sc.symbols_dir) a missing or an
+        empty directory under the scenario directory."""
+        if sc.symbols_dir == "missing":
+            return os.path.join(sdir, "symbols-missing")
+        if sc.symbols_dir == "empty":
+            return os.path.join(sdir, "symbols-empty")
+        source = "fixture" if sc.force_symbols == "fixture" else self.source
+        return self.yaru_dir if source == "yaru" else self.fixture_dir
+
     def child_env(self, sc, sdir, bus_address, result_fd, control_fd):
         home = os.path.join(sdir, "home")
         config = os.path.join(home, ".config")
@@ -490,7 +543,8 @@ class Run:
             "NO_AT_BRIDGE": "1",
             "ADW_DISABLE_PORTAL": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
-            "YARU_SYMBOLS_DIR": self.yaru_dir if source == "yaru" else self.fixture_dir,
+            "YARU_SYMBOLS_DIR": self.symbols_dir_of(sc, sdir),
+            "GUI_CHECK_ICON_THEME_FILE": os.path.join(sdir, "icon-theme"),
             MARKER: self.run_id,
             "GUI_CHECK_ROOT": ROOT,
             "GUI_CHECK_RUN_DIR": self.dir,
@@ -504,6 +558,8 @@ class Run:
             "GUI_CHECK_CONTROL_FD": str(control_fd),
         }
         os.makedirs(env["XDG_DATA_HOME"])
+        if sc.symbols_dir == "empty":
+            os.makedirs(env["YARU_SYMBOLS_DIR"])
         if sc.app_id == "test":
             env["FOLDER_SYMBOLS_APP_ID"] = self.test_app_id
         env["DBUS_SESSION_BUS_ADDRESS"] = bus_address
@@ -528,10 +584,8 @@ class Run:
 
     def warn_before_windows(self):
         """Once per session-mode run: the warning, one notification, one 5 s pause."""
-        n = self.windows_planned
-        total = -(-(n * SECONDS_PER_WINDOW + PAUSE) // 5) * 5        # rounded up to a multiple of 5
         self.announced = True
-        self.notify(WARNING_FMT.format(n=n, t=total))
+        self.notify(warning_text(self.windows_planned))
         time.sleep(PAUSE)                 # the required pause before a window appears on your screen
 
     def announce_finished(self):
@@ -593,6 +647,7 @@ class Run:
         finally:
             if bus is not None:
                 self.stop(bus)
+            restore_permissions(sdir)    # a scenario that made a file unreadable (B5) and did not restore it
             for p in list(self.procs):
                 if p is not self.xvfb and p.poll() is not None:
                     self.procs.remove(p)
@@ -668,9 +723,12 @@ class Run:
         last = f"last step {steps[-1]['n']} of {steps[-1]['of']} ({steps[-1]['name']})" if steps else "no step started"
         with open(os.path.join(sdir, "stderr.txt"), encoding="utf-8", errors="replace") as f:
             stderr = f.read().splitlines()
+        expected = (list(sc.stderr_lines(os.path.join(sdir, "home"), self.symbols_dir_of(sc, sdir)))
+                    if sc.stderr_lines is not None else [])
+        allowed = set(sc.allowed_stderr) | set(expected)
         bad = []
         for line in stderr:
-            if line in sc.allowed_stderr:
+            if line in allowed:
                 res.allowed_seen.append(line)
             elif (any(b in line for b in STDERR_BAD) or "warning" in line.lower()
                   or line.startswith(STDERR_BAD_PREFIXES)):
@@ -715,6 +773,10 @@ class Run:
             self.fail(res, f"malformed event line from the child: {text!r}")
         for line in bad:
             self.fail(res, f"unexpected stderr line: {line}")
+        if sc.stderr_lines is not None:
+            got = [line for line in stderr if line in expected]
+            if got != expected:
+                self.fail(res, f"stderr: expected exactly {expected!r} (each once, in this order), got {got!r}")
         reply = getattr(res, "real_bus", None)
         if reply and reply.get("error"):
             self.fail(res, f"real-bus check failed: {reply['error']}")
@@ -759,16 +821,28 @@ class Run:
 
 
 def select_scenarios(args, scenarios):
-    pool = [s for s in scenarios.values() if s.selftest == args.self_test and not s.manual]
+    """(chosen, left_out), in registration order.
+
+    The pool: the self-tests with --self-test, else the scenarios; never a manual one, and in --display
+    session no scenario with in_session_run False (B, C and D: they run on the harness's Xvfb by default).
+    Without -k the pool is chosen. With -k a term picks any scenario whose id it is exactly (also a manual
+    one, or one left out of session runs), and the scenarios of the pool whose id contains it. left_out: the
+    ids a term matched only as a part that session mode leaves out (give them with -k <exact id>)."""
+    session = args.display == "session"
+    kind = [s for s in scenarios.values() if s.selftest == args.self_test and not s.manual]
+    pool = [s for s in kind if not (session and not s.in_session_run)]
     if not args.k:
-        return pool
+        return pool, []
     terms = [t.strip() for t in ",".join(args.k).split(",") if t.strip()]
-    chosen = []
+    chosen, left_out = [], []
     for s in scenarios.values():
         exact = s.id in terms
-        if exact or (s in pool and any(t in s.id for t in terms)):
+        partial = any(t in s.id for t in terms)
+        if exact or (s in pool and partial):
             chosen.append(s)
-    return chosen
+        elif partial and s in kind:
+            left_out.append(s.id)
+    return chosen, left_out
 
 
 def expectation(sc, has_real_bus):
@@ -814,10 +888,12 @@ def expected_ok(res, expect):
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="gui_check", description=__doc__.split("\n\n")[0])
-    p.add_argument("-k", action="append", help="scenario ids or parts of ids, comma-separated")
+    p.add_argument("-k", action="append", help="scenario ids or parts of ids, comma-separated; with --display "
+                   "session the B, C and D scenarios run only when their exact id is given (-k B1, not -k B)")
     p.add_argument("--display", choices=DISPLAY_MODES, default=os.environ.get("GUI_CHECK_DISPLAY", "xvfb"),
                    help="where the windows open (default: $GUI_CHECK_DISPLAY, else xvfb); session warns once, "
-                   "waits 5 s once before the first window and says when the run is finished; xvfb is silent")
+                   "waits 5 s once before the first window and says when the run is finished, and runs only the A "
+                   "scenarios unless others are given by exact id with -k; xvfb is silent and runs them all")
     p.add_argument("--symbols", choices=("auto", "yaru", "fixture"), default="auto")
     p.add_argument("--self-test", action="store_true", help="run the harness's own self-tests (Z)")
     p.add_argument("--list", action="store_true", help="list the scenarios and exit")
@@ -842,9 +918,12 @@ def main(argv=None):
                                      ("needs Yaru", s.needs_yaru), ("real id", s.app_id == "real")) if on]
             say(f"{s.id:<4} {s.title}" + (f"  ({', '.join(flags)})" if flags else ""))
         return EXIT_OK
-    chosen = select_scenarios(args, scenarios)
+    chosen, left_out = select_scenarios(args, scenarios)
+    if left_out:
+        say(f"gui_check: {', '.join(left_out)} not selected in session mode, use -k <exact id>")
     if not chosen:
-        say("gui_check: no scenario matches")
+        if not left_out:
+            say("gui_check: no scenario matches")
         return EXIT_SETUP
 
     run = Run(args)
@@ -854,6 +933,8 @@ def main(argv=None):
 
     def on_signal(signum, _frame):
         run.cleanup()
+        if run.dir:
+            restore_permissions(run.dir)
         run.announce_finished()
         say(f"gui_check: stopped by {signal.Signals(signum).name}; every process of this run was stopped; "
             f"kept {run.dir}")
@@ -917,6 +998,7 @@ def main(argv=None):
             code = EXIT_OK
         say("summary: " + ", ".join(f"{n} {v}" for v, n in counts.items() if n or v == PASS)
             + f"; {time.monotonic() - started:.1f} s; exit {code}")
+    restore_permissions(run.dir)
     if code == EXIT_OK and not args.keep:
         shutil.rmtree(run.dir, ignore_errors=True)
     else:

@@ -3,6 +3,7 @@ an independent count of a symbols directory, and the folders and manifest entrie
 
 The symbols are simple shapes drawn here (our own work, MIT like the rest of the code), not copies of
 Yaru. They are written at start-up into the run directory; nothing is committed."""
+import json
 import os
 
 SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'
@@ -117,6 +118,18 @@ def narrowing_pair(symbols_dir, candidates):
     return None
 
 
+THEMES_JSON = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                           "assets", "themes.json")
+
+
+def theme_color(variant):
+    """The folder colour of a built-in variant (colors[0] in assets/themes.json, read here with json and not
+    with the package's code), or None when the variant has none (light Yaru-mate)."""
+    with open(THEMES_JSON, encoding="utf-8") as f:
+        colors = json.load(f)["themes"][variant]["colors"]
+    return colors[0] if colors else None
+
+
 def has_symbols(symbols_dir):
     return os.path.isdir(symbols_dir) and count_symbols(symbols_dir) > 0
 
@@ -172,3 +185,30 @@ class Context:
     def manifest_path():
         from folder_symbols import store
         return store.manifest_path()
+
+    @staticmethod
+    def icon_theme(name):
+        """Make the gsettings stub report this icon theme from now on (the system accent the window sees)."""
+        with open(os.environ["GUI_CHECK_ICON_THEME_FILE"], "w", encoding="utf-8") as f:
+            f.write(name)
+
+    def manifest_text(self, text):
+        """Write the manifest file as this raw text (for example a damaged one); returns its path."""
+        path = self.manifest_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    @staticmethod
+    def make_unreadable(path):
+        """chmod 0 path and check that reading it now fails (it does not as root: then raise, never pass).
+        The scenario restores the mode in a finally, and the parent restores it before removing the run
+        directory."""
+        os.chmod(path, 0)
+        try:
+            open(path, "rb").close()
+        except PermissionError:
+            return
+        os.chmod(path, 0o600)
+        raise RuntimeError(f"chmod 0 did not make {path} unreadable (running as root?)")

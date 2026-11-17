@@ -4,12 +4,20 @@ main loop killed by the parent, that wait_until counts real main-loop iterations
 that the real application id on the private bus leaves the real session bus alone, a crash or a non-zero
 exit after the end event, application diagnostics on stderr, a window closed before the scenario started
 (through each of the driver's two checks, Z12 and Z15), a malformed event line, an end event of the wrong
-type, and a process that exits without a result. Z5 needs a person and runs only when asked for by its exact
-id. Z8 expects NOT VERIFIED instead of PASS when the harness has no real session bus."""
+type, and a process that exits without a result. Z17-Z22 cover the helpers added for the B, C and D scenarios:
+the warning wording and the session-mode selection (Z17), the exact stderr lines a scenario must print
+(Z18-Z20), the gsettings stub's icon theme file (Z21) and restore_permissions (Z22). Z5 needs a person and runs
+only when asked for by its exact id. Z8 expects NOT VERIFIED instead of PASS when the harness has no real
+session bus."""
+import argparse
+import importlib.util
 import os
 import signal
+import stat
+import subprocess
 import sys
 
+import registry
 from registry import FAIL, INCOMPLETE, NOT_VERIFIED, PASS, scenario
 
 
@@ -207,3 +215,125 @@ def z16(d):
     d.wait_window()
     d.step("exit")
     os._exit(3)               # no end event, nothing on stderr: once taken for a user close in session mode
+
+
+# ------------------------------------------------------------- Z17-Z22: the helpers added for B, C and D
+def load_main():
+    """The harness's __main__.py as a module (its main() runs only under its own __name__ guard)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "__main__.py")
+    spec = importlib.util.spec_from_file_location("gui_check_main", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+WARNING_TAIL = " for a visual check, about {t} seconds in total, please do not touch the keyboard or mouse until " \
+               "the finished message"
+A_IDS = ["A1", "A2", "A2b", "A3", "A4", "A5", "A6", "A7"]
+B_IDS = ["B1", "B2", "B3", "B4", "B4b", "B5"]
+
+
+@scenario("Z17", "the warning wording (1 window, N windows) and the session-mode selection of B, C and D",
+          selftest=True, needs_display=False, expect=(PASS, ""),
+          steps=("wording", "default runs", "session -k B1", "session -k B"))
+def z17(d):
+    main = load_main()
+    d.step("wording")
+    d.check("warning for 1 window", main.warning_text(1), "Opening 1 window" + WARNING_TAIL.format(t=10))
+    d.check("warning for 7 windows", main.warning_text(7), "Opening 7 windows" + WARNING_TAIL.format(t=30))
+    scenarios = registry.load()
+    args = lambda display, k=None: argparse.Namespace(display=display, self_test=False, k=k)
+    d.step("default runs")
+    chosen, left_out = main.select_scenarios(args("session"), scenarios)
+    d.check("session run: scenarios", [s.id for s in chosen], A_IDS)
+    d.check("session run: windows", sum(1 for s in chosen if s.opens_window), 7)
+    d.check("session run: left out", left_out, [])
+    chosen, _left_out = main.select_scenarios(args("xvfb"), scenarios)
+    ids = [s.id for s in chosen]
+    d.check("xvfb run: B1, C1 and D6 included", all(i in ids for i in ("B1", "C1", "D6")), True)
+    d.step("session -k B1")
+    chosen, left_out = main.select_scenarios(args("session", ["B1"]), scenarios)
+    d.check("session -k B1: scenarios", [s.id for s in chosen], ["B1"])
+    d.check("session -k B1: left out", left_out, [])
+    n = sum(1 for s in chosen if s.opens_window)
+    d.check("session -k B1: N windows", n, 1)
+    d.check("session -k B1: T seconds", main.warning_seconds(n), 10)
+    d.step("session -k B")
+    chosen, left_out = main.select_scenarios(args("session", ["B"]), scenarios)
+    d.check("session -k B: scenarios", [s.id for s in chosen], [])
+    d.check("session -k B: left out", left_out, B_IDS)
+    done = subprocess.run([sys.executable, os.path.join(d.root, "tools", "gui_check"), "--display", "session",
+                           "-k", "B"], capture_output=True, text=True, timeout=30)
+    d.check("session -k B: exit status", done.returncode, 2)
+    d.check("session -k B: output", done.stdout,
+            f"gui_check: {', '.join(B_IDS)} not selected in session mode, use -k <exact id>\n")
+
+
+def z_line(home, _symbols_dir):
+    return (f"folder-symbols: the self-test's expected line for {home}",)
+
+
+def print_z_line(times):
+    for _ in range(times):
+        print(z_line(os.environ["HOME"], None)[0], file=sys.stderr, flush=True)
+
+
+@scenario("Z18", "an expected stderr line (stderr_lines) printed once: allowed, PASS", selftest=True,
+          needs_display=False, stderr_lines=z_line, steps=("print it once",), expect=(PASS, ""))
+def z18(d):
+    d.step("print it once")
+    print_z_line(1)
+
+
+@scenario("Z19", "an expected stderr line printed twice: FAIL", selftest=True, needs_display=False,
+          stderr_lines=z_line, steps=("print it twice",),
+          expect=(FAIL, "stderr: expected exactly", "unexpected stderr line"))
+def z19(d):
+    d.step("print it twice")
+    print_z_line(2)
+
+
+@scenario("Z20", "an expected stderr line not printed: FAIL", selftest=True, needs_display=False,
+          stderr_lines=z_line, steps=("print nothing",), expect=(FAIL, ("stderr: expected exactly", "got []")))
+def z20(d):
+    d.step("print nothing")
+
+
+@scenario("Z21", "the gsettings stub reports the scenario's icon theme file, else 'Yaru'", selftest=True,
+          needs_display=False, steps=("without the file", "with the file"), expect=(PASS, ""))
+def z21(d):
+    path = os.environ["GUI_CHECK_ICON_THEME_FILE"]
+    run_dir = os.path.realpath(os.environ["GUI_CHECK_RUN_DIR"]) + os.sep
+    get = lambda: subprocess.run(["gsettings", "get", "org.gnome.desktop.interface", "icon-theme"],
+                                 capture_output=True, text=True, timeout=10)
+    d.step("without the file")
+    d.check("theme file under the run directory", os.path.realpath(path).startswith(run_dir), True)
+    d.check("theme file exists", os.path.exists(path), False)
+    done = get()
+    d.check("reply without the file", (done.returncode, done.stdout, done.stderr), (0, "'Yaru'\n", ""))
+    d.step("with the file")
+    d.ctx.icon_theme("Yaru-blue")
+    done = get()
+    d.check("reply with the file", (done.returncode, done.stdout, done.stderr), (0, "'Yaru-blue'\n", ""))
+
+
+@scenario("Z22", "restore_permissions makes a mode-0 file and directory readable again, links untouched",
+          selftest=True, needs_display=False, steps=("mode 0", "restored"), expect=(PASS, ""))
+def z22(d):
+    main = load_main()
+    top = os.path.join(os.environ["TMPDIR"], "z22")
+    inner = os.path.join(top, "inner")
+    os.makedirs(inner)
+    f = os.path.join(inner, "manifest.json")
+    open(f, "w").close()
+    link = os.path.join(top, "broken")
+    os.symlink(os.path.join(top, "no-such-target"), link)
+    d.step("mode 0")
+    os.chmod(f, 0)
+    os.chmod(inner, 0)
+    d.check("modes before", (stat.S_IMODE(os.lstat(inner).st_mode), ), (0,))
+    d.step("restored")
+    main.restore_permissions(top)
+    d.check("directory mode has rwx for the owner", stat.S_IMODE(os.lstat(inner).st_mode) & 0o700, 0o700)
+    d.check("file mode has rw for the owner", stat.S_IMODE(os.lstat(f).st_mode) & 0o600, 0o600)
+    d.check("broken link still a link", os.path.islink(link), True)

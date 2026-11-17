@@ -31,6 +31,14 @@ class Scenario:
     # not_verified_if(symbols_dir, source) -> reason or None: evaluated by the parent before the scenario
     # starts; a reason makes it NOT VERIFIED without opening a window
     not_verified_if: Optional[Callable] = None
+    # stderr_lines(home, symbols_dir) -> the exact stderr lines this scenario must print, each once and in this
+    # order (computed by the parent from the scenario's HOME and symbols directory); allowed for this scenario
+    # only, and a missing, repeated or reordered line is a FAIL
+    stderr_lines: Optional[Callable] = None
+    symbols_dir: Optional[str] = None     # "missing" or "empty": YARU_SYMBOLS_DIR is such a directory instead
+    # False: left out of a --display session run unless its id is given exactly with -k (it still opens a
+    # window and is counted in the warning then); always run on the harness's Xvfb
+    in_session_run: bool = True
 
     @property
     def opens_window(self):
@@ -51,7 +59,7 @@ def scenario(id, title, steps, **kwargs):
 
 def load():
     """All scenarios, in registration order (importing the modules registers them)."""
-    import scenarios_a, scenarios_z  # noqa: F401  (tools/gui_check is on sys.path)
+    import scenarios_a, scenarios_b, scenarios_c, scenarios_d, scenarios_z  # noqa: F401  (on sys.path)
     return dict(SCENARIOS)
 
 
