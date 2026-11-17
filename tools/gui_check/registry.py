@@ -39,6 +39,9 @@ class Scenario:
     # False: left out of a --display session run unless its id is given exactly with -k (it still opens a
     # window and is counted in the warning then); always run on the harness's Xvfb
     in_session_run: bool = True
+    # the final exception lines of the tracebacks this scenario must print to stderr, each block once and in
+    # this order (an unexpected error that the window catches and prints); allowed for this scenario only
+    stderr_tracebacks: tuple = ()
 
     @property
     def opens_window(self):
@@ -59,7 +62,8 @@ def scenario(id, title, steps, **kwargs):
 
 def load():
     """All scenarios, in registration order (importing the modules registers them)."""
-    import scenarios_a, scenarios_b, scenarios_c, scenarios_d, scenarios_z  # noqa: F401  (on sys.path)
+    import scenarios_a, scenarios_b, scenarios_c, scenarios_d  # noqa: F401  (on sys.path)
+    import scenarios_e, scenarios_f, scenarios_g, scenarios_h, scenarios_z  # noqa: F401
     return dict(SCENARIOS)
 
 
@@ -79,6 +83,7 @@ class Recorder:
         self.scenario, self.emit, self.ctx = scenario, emit, ctx
         self.step_no = 0
         self.differences = []
+        self.unverified = []              # parts the scenario could not check (not_verified)
 
     @property
     def total_steps(self):
@@ -108,6 +113,12 @@ class Recorder:
     def info(self, text):
         self.emit("info", text=text)
 
+    def not_verified(self, reason):
+        """A part of the scenario that cannot be checked here: the verdict is NOT VERIFIED with this reason
+        unless a check failed (FAIL wins), never PASS."""
+        self.unverified.append(reason)
+        self.info(f"NOT VERIFIED: {reason}")
+
     def steps_summary(self):
         ran = list(self.scenario.steps[:self.step_no])
         return ran, list(self.scenario.steps[self.step_no:])
@@ -116,4 +127,8 @@ class Recorder:
         if self.step_no < self.total_steps:
             _ran, missing = self.steps_summary()
             raise Fail(f"only {self.step_no} of {self.total_steps} steps ran (missing: {', '.join(missing)})")
-        return (PASS, None) if not self.differences else (FAIL, f"{len(self.differences)} difference(s)")
+        if self.differences:
+            return FAIL, f"{len(self.differences)} difference(s)"
+        if self.unverified:
+            return NOT_VERIFIED, "; ".join(self.unverified)
+        return PASS, None

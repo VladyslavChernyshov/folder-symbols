@@ -4,6 +4,7 @@ Only public GTK/libadwaita API of GTK 4.14 / libadwaita 1.5 is used. Waiting is 
 iterates the GLib main context until a condition holds; nothing sleeps. A GLib watchdog ends a scenario
 that waits too long ("TIMEOUT at step N"); a window closed by anyone but the driver ends it INCOMPLETE
 ("WINDOW CLOSED BY THE USER at step N of M")."""
+import contextlib
 import json
 import os
 import stat
@@ -40,6 +41,9 @@ class Driver(Recorder):
         self.root = os.environ["GUI_CHECK_ROOT"]
         self.opens, self.activates = [], 0       # paths of every "open" emission; "activate" emissions
         self.closing = False                     # True while the driver itself closes a window
+        self.expect_close = False                # True inside allow_app_close(): the app may close its window
+        self.app_closes = 0                      # windows the app closed inside allow_app_close()
+        self.dialogs = []                        # (step, heading) of every dialog presented on a window
         self.closed_by_user = False
         self.watchdog_fired = False
         self.waiting_for = None
@@ -47,6 +51,7 @@ class Driver(Recorder):
         self.parent_messages = []                # lines the parent sent on the control pipe
         self._watchdog = None
         self.result = None
+        self.finishing = False
         app.connect("window-added", self._on_window_added)
         app.connect("open", self._on_open)
         app.connect("activate", self._on_activate)
@@ -58,8 +63,36 @@ class Driver(Recorder):
     # ------------------------------------------------------------- signals
     def _on_window_added(self, _app, window):
         window.connect("close-request", self._on_close_request)
+        if hasattr(window, "get_visible_dialog"):            # Adw.ApplicationWindow, libadwaita 1.5
+            window.connect("notify::visible-dialog", self._on_visible_dialog)
+
+    def _on_visible_dialog(self, window, _pspec):
+        dialog = window.get_visible_dialog()
+        if dialog is not None:
+            heading = dialog.get_heading() if hasattr(dialog, "get_heading") else type(dialog).__name__
+            self.dialogs.append((self.step_no, heading))
+
+    @contextlib.contextmanager
+    def allow_app_close(self):
+        """Inside this block the application may close its own window (after a full success, or "Close
+        Window"): closing is set BEFORE the action, so the close is counted in app_closes and not taken for
+        the user's. Outside it every close the driver did not make is the user's (INCOMPLETE), as before."""
+        self.closing, self.expect_close = True, True
+        try:
+            yield
+        finally:
+            self.expect_close = False
+            if not self.finishing:
+                self.closing = False
+
+    def open_dialogs(self):
+        """[(window, dialog)] of the dialogs visible on the application's windows now."""
+        return [(w, w.get_visible_dialog()) for w in self.app.get_windows()
+                if hasattr(w, "get_visible_dialog") and w.get_visible_dialog() is not None]
 
     def _on_close_request(self, _window):
+        if self.closing and self.expect_close:
+            self.app_closes += 1
         if not self.closing:
             self.closed_by_user = True
             self.emit("log", text=f"WINDOW CLOSED BY THE USER at step {self.step_no} of {self.total_steps}")
@@ -287,6 +320,12 @@ class Driver(Recorder):
             self.scenario.body(self)
             if self.closed_by_user:
                 raise Incomplete()
+            left = self.open_dialogs()
+            if left:
+                raise Fail(f"step {self.step_no}: a dialog was left open: "
+                           + ", ".join(repr(d.get_heading() if hasattr(d, "get_heading") else type(d).__name__)
+                                       for _w, d in left)
+                           + " (every scenario must answer or close the dialogs it opens)")
             verdict, reason = self.verdict_after_body()
         except Incomplete:
             verdict, reason = INCOMPLETE, self.incomplete_reason()
@@ -313,6 +352,7 @@ class Driver(Recorder):
 
     def finish(self):
         """Close every window (the driver's own close, not the user's) and quit."""
+        self.finishing = True
         self.closing = True
         for window in list(self.app.get_windows()):
             window.destroy()

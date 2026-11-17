@@ -6,7 +6,10 @@ exit after the end event, application diagnostics on stderr, a window closed bef
 (through each of the driver's two checks, Z12 and Z15), a malformed event line, an end event of the wrong
 type, and a process that exits without a result. Z17-Z22 cover the helpers added for the B, C and D scenarios:
 the warning wording and the session-mode selection (Z17), the exact stderr lines a scenario must print
-(Z18-Z20), the gsettings stub's icon theme file (Z21) and restore_permissions (Z22). Z5 needs a person and runs
+(Z18-Z20), the gsettings stub's icon theme file (Z21) and restore_permissions (Z22). Z23-Z32 cover those added
+for E, F, G and H: a dialog left open (Z23), the dialog helpers (Z24), a window the application closes inside
+allow_app_close (Z25) and a close after such a block, which is the user's again (Z26), not_verified (Z27, Z28),
+the declared tracebacks (Z29-Z31) and Stub.during with the result builders (Z32). Z5 needs a person and runs
 only when asked for by its exact id. Z8 expects NOT VERIFIED instead of PASS when the harness has no real
 session bus."""
 import argparse
@@ -337,3 +340,163 @@ def z22(d):
     d.check("directory mode has rwx for the owner", stat.S_IMODE(os.lstat(inner).st_mode) & 0o700, 0o700)
     d.check("file mode has rw for the owner", stat.S_IMODE(os.lstat(f).st_mode) & 0o600, 0o600)
     d.check("broken link still a link", os.path.islink(link), True)
+
+
+# ------------------------------------------------------------- Z23-Z32: the helpers added for E, F, G and H
+def present_dialog(d, heading, responses=(("ok", "OK"),), default=None, close=None, extra=None):
+    """An Adw.AlertDialog made here (not by the application) on the window; returns (dialog, responses got)."""
+    Adw = d.Adw
+    dialog = Adw.AlertDialog(heading=heading, body=f"{heading} body")
+    if extra is not None:
+        dialog.set_extra_child(d.Gtk.ScrolledWindow(child=d.Gtk.Label(label=extra)))
+    for rid, label in responses:
+        dialog.add_response(rid, label)
+    if default:
+        dialog.set_default_response(default)
+    if close:
+        dialog.set_close_response(close)
+    got = []
+    dialog.connect("response", lambda _d, r: got.append(r))
+    dialog.present(d.window)
+    d.wait_until(lambda: d.window.get_visible_dialog() is dialog, f"the dialog {heading!r} to be shown")
+    return dialog, got
+
+
+@scenario("Z23", "a dialog left open at the end of the scenario: FAIL", selftest=True,
+          steps=("window shown", "present and leave"), expect=(FAIL, "a dialog was left open: 'Z23 left open'"))
+def z23(d):
+    d.step("window shown")
+    d.wait_window()
+    d.step("present and leave")
+    present_dialog(d, "Z23 left open")
+
+
+@scenario("Z24", "check_dialog and answer_dialog on a dialog: its texts, responses and the clicked response",
+          selftest=True, steps=("window shown", "check", "answer"), expect=(PASS, ""))
+def z24(d):
+    import ui
+    d.step("window shown")
+    d.wait_window()
+    d.step("check")
+    dialog, got = present_dialog(d, "Z24 question", (("cancel", "Cancel"), ("remove", "Remove")), "cancel",
+                                 "cancel", extra="~/a\n~/b")
+    dialog.set_response_appearance("remove", d.Adw.ResponseAppearance.DESTRUCTIVE)
+    ui.check_dialog(d, "Z24 question", "Z24 question body", "~/a\n~/b",
+                    {"cancel": ("Cancel", "default"), "remove": ("Remove", "destructive")}, "cancel", "cancel")
+    d.step("answer")
+    ui.answer_dialog(d, "remove")
+    d.check("responses emitted", got, ["remove"])
+    d.check("visible dialog", d.window.get_visible_dialog(), None)
+    d.check("dialogs recorded", d.dialogs, [(2, "Z24 question")])
+
+
+@scenario("Z25", "the application closes its window inside allow_app_close: PASS, counted", selftest=True,
+          steps=("window shown", "app closes"), expect=(PASS, ""))
+def z25(d):
+    d.step("window shown")
+    win = d.wait_window()
+    d.step("app closes")
+    with d.allow_app_close():
+        d.GLib.idle_add(lambda: win.close() or False)
+        d.wait_until(lambda: not d.app.get_windows(), "the window to close")
+    d.check("windows closed by the application", d.app_closes, 1)
+    d.check("closing reset after the block", (d.closing, d.expect_close), (False, False))
+
+
+@scenario("Z26", "after an allow_app_close block, a close is the user's again: INCOMPLETE", selftest=True,
+          steps=("window shown", "empty allow block", "close from outside", "after the close"),
+          expect=(INCOMPLETE, "WINDOW CLOSED BY THE USER at step 3 of 4"))
+def z26(d):
+    d.step("window shown")
+    win = d.wait_window()
+    d.step("empty allow block")
+    with d.allow_app_close():
+        pass
+    d.step("close from outside")
+    d.GLib.timeout_add(200, lambda: win.close() or False)
+    d.wait_until(lambda: False, "the window to be closed from outside", timeout=10)
+    d.step("after the close")
+
+
+@scenario("Z27", "a part the scenario cannot check (not_verified): NOT VERIFIED with the reason", selftest=True,
+          needs_display=False, steps=("not verified",), expect=(NOT_VERIFIED, "the part Z27 cannot check"))
+def z27(d):
+    d.step("not verified")
+    d.not_verified("the part Z27 cannot check")
+
+
+@scenario("Z28", "not_verified and a failed check: FAIL wins", selftest=True, needs_display=False,
+          steps=("both",), expect=(FAIL, "1 difference(s)"))
+def z28(d):
+    d.step("both")
+    d.not_verified("the part Z28 cannot check")
+    d.check("a check that fails", 1, 2)
+
+
+def print_traceback(message):
+    import traceback
+    try:
+        raise RuntimeError(message)
+    except RuntimeError:
+        traceback.print_exc()
+    sys.stderr.flush()
+
+
+Z_TRACEBACK = "RuntimeError: injected by the self-test"
+
+
+@scenario("Z29", "a declared traceback (stderr_tracebacks) printed once: allowed, PASS", selftest=True,
+          needs_display=False, steps=("print it",), stderr_tracebacks=(Z_TRACEBACK,), expect=(PASS, ""))
+def z29(d):
+    d.step("print it")
+    print_traceback("injected by the self-test")
+
+
+@scenario("Z30", "a declared traceback printed twice: FAIL", selftest=True, needs_display=False,
+          steps=("print it twice",), stderr_tracebacks=(Z_TRACEBACK,),
+          expect=(FAIL, "stderr: expected exactly the tracebacks ending"))
+def z30(d):
+    d.step("print it twice")
+    print_traceback("injected by the self-test")
+    print_traceback("injected by the self-test")
+
+
+@scenario("Z31", "a traceback with another exception than the declared one: FAIL", selftest=True,
+          needs_display=False, steps=("print another",), stderr_tracebacks=(Z_TRACEBACK,),
+          expect=(FAIL, ("stderr: expected exactly the tracebacks ending",
+                         "unexpected stderr line: Traceback (most recent call last):")))
+def z31(d):
+    d.step("print another")
+    print_traceback("something else")
+
+
+@scenario("Z32", "Stub.during runs inside the call with the arguments; records are frozen; the result builders",
+          selftest=True, needs_display=False, steps=("during and freeze", "builders"), expect=(PASS, ""))
+def z32(d):
+    import stubs
+    from folder_symbols import apply, store
+    d.step("during and freeze")
+    stub, seen = stubs.Stub("z32"), []
+    stub.returns = "result"
+    stub.during = lambda *a, **k: seen.append((list(a[0]), dict(k), len(stub.calls)))
+    dirs = ["/a", "/b"]
+    d.check("returns", stub(dirs, "sym", dark=False), "result")
+    dirs.append("/c")                     # a change after the call must not alter the record
+    d.check("record", stub.calls, [((("/a", "/b"), "sym"), (("dark", False),))])
+    d.check("during saw the arguments, after the record", seen, [(["/a", "/b"], {"dark": False}, 1)])
+    stub.raises = ValueError("z32")
+    try:
+        stub([])
+        raised = None
+    except ValueError as e:
+        raised = str(e)
+    d.check("raises after during", (raised, len(seen)), ("z32", 2))
+    d.step("builders")
+    results = stubs.folder_results(["/a", "/b"], {"/b": "denied"})
+    d.check("folder_results", results, [apply.FolderResult("/a", True, "icon set"),
+                                        apply.FolderResult("/b", False, "denied")])
+    plan = stubs.cleanup_plan(stale=["/x"], unknown=["/y"], skipped=2, warnings=("w",))
+    d.check("cleanup_plan", (type(plan).__name__, [e.folder for e in plan.stale], [e.folder for e, _ in plan.unknown],
+                             plan.skipped, plan.total, plan.warnings),
+            ("CleanupPlan", ["/x"], ["/y"], 2, 4, ("w",)))
+    d.check("cleanup_result", stubs.cleanup_result(["/x"], ["/y"]), store.CleanupResult(("/x",), ("/y",)))

@@ -198,6 +198,26 @@ def restore_permissions(top):
                     pass
 
 
+TRACEBACK_START = "Traceback (most recent call last):"
+
+
+def traceback_blocks(lines):
+    """[(first, last)] line indexes of each Python traceback in lines: from TRACEBACK_START through the first
+    line after it that is not indented (the exception line; the last line when the block is cut off)."""
+    blocks, i = [], 0
+    while i < len(lines):
+        if lines[i] == TRACEBACK_START:
+            j = i + 1
+            while j < len(lines) and lines[j].startswith(" "):
+                j += 1
+            last = min(j, len(lines) - 1)
+            blocks.append((i, last))
+            i = last + 1
+        else:
+            i += 1
+    return blocks
+
+
 def random_suffix(n=10):
     first = random.choice(string.ascii_letters)
     return first + "".join(random.choice(string.ascii_letters + string.digits) for _ in range(n - 1))
@@ -726,9 +746,17 @@ class Run:
         expected = (list(sc.stderr_lines(os.path.join(sdir, "home"), self.symbols_dir_of(sc, sdir)))
                     if sc.stderr_lines is not None else [])
         allowed = set(sc.allowed_stderr) | set(expected)
+        blocks = traceback_blocks(stderr)
+        allowed_at = set()               # lines of the tracebacks this scenario declares (stderr_tracebacks)
+        if sc.stderr_tracebacks:
+            for first, last in blocks:
+                if stderr[last] in sc.stderr_tracebacks:
+                    allowed_at.update(range(first, last + 1))
         bad = []
-        for line in stderr:
-            if line in allowed:
+        for index, line in enumerate(stderr):
+            if index in allowed_at:
+                res.allowed_seen.append(line)
+            elif line in allowed:
                 res.allowed_seen.append(line)
             elif (any(b in line for b in STDERR_BAD) or "warning" in line.lower()
                   or line.startswith(STDERR_BAD_PREFIXES)):
@@ -773,6 +801,11 @@ class Run:
             self.fail(res, f"malformed event line from the child: {text!r}")
         for line in bad:
             self.fail(res, f"unexpected stderr line: {line}")
+        if sc.stderr_tracebacks:
+            finals = [stderr[last] for _first, last in blocks]
+            if finals != list(sc.stderr_tracebacks):
+                self.fail(res, f"stderr: expected exactly the tracebacks ending {list(sc.stderr_tracebacks)!r}, "
+                               f"got tracebacks ending {finals!r}")
         if sc.stderr_lines is not None:
             got = [line for line in stderr if line in expected]
             if got != expected:

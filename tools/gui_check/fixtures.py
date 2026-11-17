@@ -182,6 +182,12 @@ class Context:
         store.record(folder, store.Recipe(symbol, accent))
 
     @staticmethod
+    def forget(folder):
+        """Remove the folder's manifest entry (what a real reset or cleanup does to it)."""
+        from folder_symbols import store
+        store.remove(folder)
+
+    @staticmethod
     def manifest_path():
         from folder_symbols import store
         return store.manifest_path()

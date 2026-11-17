@@ -295,3 +295,152 @@ def next_frames(d, widget, n=2):
     widget.add_tick_callback(tick)
     widget.queue_draw()
     d.wait_until(lambda: ticks[0] >= n, f"{n} frames of {type(widget).__name__}")
+
+
+# ------------------------------------------------------------- buttons, dialogs, toasts (scenarios E-H)
+KNOWN_RESPONSES = ("ok", "close", "cancel", "reset", "remove")    # every response id window.py uses
+
+
+def click(d, name):
+    """A click on the named Gtk.Button: "clicked", what GTK emits when a click on it is released. GTK
+    delivers no click to an insensitive button, so it must be sensitive (E8's re-entry emits directly)."""
+    button = d.find_one(name)
+    d.require(button.get_sensitive(), f"{name} is insensitive: a click would not reach it")
+    button.emit("clicked")
+
+
+def window(d):
+    windows = d.app.get_windows()
+    d.require(len(windows) == 1, f"expected exactly one window, found {len(windows)}")
+    return windows[0]
+
+
+def visible_dialog(d, what="a dialog"):
+    """The dialog shown on the window now; FAIL when none appears within 5 s."""
+    win = window(d)
+    wait_quietly(d, lambda: win.get_visible_dialog() is not None, f"{what} to be shown")
+    dialog = win.get_visible_dialog()
+    d.require(dialog is not None, f"no dialog shown ({what})")
+    return dialog
+
+
+def _response_info(d):
+    if not getattr(d, "_response_info_given", False):
+        d._response_info_given = True
+        d.info("FALLBACK: dialog response buttons are found by a widget-tree search (Adw.AlertDialog has no "
+               "public list of its responses and no public response())")
+
+
+def dialog_state(d, dialog):
+    """What the dialog shows, read with Adw.AlertDialog's getters; the buttons by a widget-tree search."""
+    _response_info(d)
+    extra = dialog.get_extra_child()
+    details = None
+    if extra is not None:
+        texts = [w.get_label() for w in walk(extra) if isinstance(w, d.Gtk.Label)]
+        details = "\n".join(texts)
+    responses = {r: (dialog.get_response_label(r), dialog.get_response_appearance(r).value_nick)
+                 for r in KNOWN_RESPONSES if dialog.has_response(r)}
+    buttons = sorted(w.get_label() for w in walk(dialog) if isinstance(w, d.Gtk.Button) and w.get_label())
+    return {"heading": dialog.get_heading(), "body": dialog.get_body(), "details": details,
+            "responses": responses, "buttons": buttons, "default": dialog.get_default_response(),
+            "close": dialog.get_close_response()}
+
+
+def check_dialog(d, heading, body, details=None, responses=None, default="ok", close="ok"):
+    """Check the visible dialog. responses: {id: (label, appearance)}, default {"ok": ("OK", "default")}."""
+    responses = responses or {"ok": ("OK", "default")}
+    state = dialog_state(d, visible_dialog(d, f"the dialog {heading!r}"))
+    expected = {"heading": heading, "body": body, "details": details, "responses": responses,
+                "buttons": sorted(label for label, _ in responses.values()), "default": default, "close": close}
+    for key, value in expected.items():
+        d.check(f"dialog {key}", state[key], value)
+    return state
+
+
+def answer_dialog(d, response):
+    """Click the visible dialog's response button (its Gtk.Button, found by its label) and wait until that
+    dialog is no longer the visible one (the app may present the next one at once)."""
+    _response_info(d)
+    win = window(d)
+    dialog = visible_dialog(d, f"a dialog to answer {response!r}")
+    d.require(dialog.has_response(response), f"the dialog {dialog.get_heading()!r} has no response {response!r}")
+    label = dialog.get_response_label(response)
+    button = one(d, [w for w in walk(dialog) if isinstance(w, d.Gtk.Button) and w.get_label() == label],
+                 f"button {label!r} in the dialog {dialog.get_heading()!r}")
+    button.emit("clicked")
+    d.wait_until(lambda: not win.get_mapped() or win.get_visible_dialog() is not dialog,
+                 f"the dialog {dialog.get_heading()!r} to close after {response!r}")
+
+
+def answer_closing(d, response):
+    """answer_dialog for a response after which the application closes its window: inside
+    d.allow_app_close(), then wait until the window is gone."""
+    with d.allow_app_close():
+        dialog_win = window(d)
+        answer_dialog(d, response)
+        wait_quietly(d, lambda: not d.app.get_windows(), "the application to close its window")
+    return dialog_win
+
+
+def no_dialog(d, label):
+    """Check that no dialog is open; one that is (a broken behaviour) is recorded and closed, so the
+    scenario FAILs by this check and not by the left-open rule."""
+    left = d.open_dialogs()
+    d.check(f"no dialog open ({label})", [dlg.get_heading() for _w, dlg in left], [])
+    for win, dlg in left:
+        dlg.close()
+        d.wait_until(lambda: win.get_visible_dialog() is not dlg, "a stray dialog to close")
+
+
+def dismiss_dialog(d):
+    """Close the visible dialog as Escape does (its close response)."""
+    win = window(d)
+    dialog = visible_dialog(d, "a dialog to close")
+    dialog.close()
+    d.wait_until(lambda: win.get_visible_dialog() is not dialog, "the dialog to close")
+
+
+def buttons_state(d):
+    apply, reset = d.find_one("apply-button"), d.find_one("reset-button")
+    return {"apply": (apply.get_sensitive(), apply.get_tooltip_text()),
+            "reset": (reset.get_label(), reset.get_sensitive(), reset.get_tooltip_text()),
+            "clean-up": window(d).lookup_action("clean-up").get_enabled()}
+
+
+class Toasts:
+    """record_toasts(d): Adw.ToastOverlay has no getter for its toasts, so while the block runs the class's
+    add_toast (which the app calls from Python) is wrapped to record each toast's title."""
+
+    def __init__(self, d):
+        self.d, self.titles, self.toasts = d, [], []
+
+    def __enter__(self):
+        Adw = self.d.Adw
+        self.original = Adw.ToastOverlay.add_toast
+        titles, toasts, original = self.titles, self.toasts, self.original
+
+        def add_toast(overlay, toast):
+            titles.append(toast.get_title())
+            toasts.append(toast)
+            return original(overlay, toast)
+
+        Adw.ToastOverlay.add_toast = add_toast
+        self.d.info("FALLBACK: toast titles recorded by wrapping Adw.ToastOverlay.add_toast in the scenario "
+                    "process (no public getter on the overlay)")
+        return self
+
+    def __exit__(self, *exc):
+        self.d.Adw.ToastOverlay.add_toast = self.original
+        return False
+
+    def dismiss_all(self):
+        """Dismiss the recorded toasts (Adw.Toast.dismiss): a new toast is queued behind a shown one."""
+        for toast in self.toasts:
+            toast.dismiss()
+
+
+def toast_label_shown(d, title):
+    """True when a mapped Gtk.Label with this text is in the window (the toast as drawn)."""
+    win = window(d)
+    return any(isinstance(w, d.Gtk.Label) and w.get_label() == title and w.get_mapped() for w in walk(win))
