@@ -5,43 +5,94 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
-    # the same Ubuntu release (and so the same Yaru) the icons are developed against
+    # The host only provides Docker and the runner. Pinning it (instead of ubuntu-latest, which GitHub is moving
+    # from 24.04 to 26.04 and will move again later) means a future "latest" cannot change this job. Same image today.
+    runs-on: ubuntu-26.04
+    # The tests run in a bare Ubuntu 26.04 userland, the release (and so the Yaru) the icons are developed against.
+    # It is also the only way to get a fixed dependency list: the host image has many preinstalled packages, a
+    # non-root user and sudo, which would hide missing dependencies and change which tests are skipped.
     container: ubuntu:26.04
+    # A normal run takes about 5 minutes. A hung apt retry loop or batch must not hold the runner for 6 hours.
+    timeout-minutes: 20
+    defaults:
+      run:
+        # Inside a container steps get `sh -e` by default, which has no pipefail: `batch ... | tail -3` would
+        # report the exit status of tail and hide a failing batch. bash is part of the base image and runs
+        # `bash -eo pipefail`.
+        shell: bash
+    env:
+      # Nothing prompts today, but a package that pulls in tzdata or debconf would hang a headless apt run.
+      DEBIAN_FRONTEND: noninteractive
     steps:
+      # checkout runs before git is installed, so it falls back to a tarball download (same as the last green run).
+      # The log shows Node 20 deprecation for checkout@v4 and upload-artifact@v4 (the runner already forces
+      # Node 24, so they work). Optional later bump, both declare `using: node24`: actions/checkout@v7 and
+      # actions/upload-artifact@v7 (v7 adds ESM and an `archive` input; nothing used here changes).
       - uses: actions/checkout@v4
 
       - name: Install dependencies and the Yaru icon themes
         run: |
           # the Ubuntu archive is sometimes unreachable from the runners: retry instead of failing
+          # ca-certificates + git: https access (git is not used by checkout here, see above)
+          # yaru-theme-icon: the Yaru PNG themes and symbols the tests read from /usr/share/icons
+          # python3 (explicit, not only through python3-pil), python3-pil/-numpy/-scipy: the runtime dependencies
+          # python3-pytest: pytest from the archive (no pip, so PEP 668 does not apply)
+          # librsvg2-bin: rsvg-convert for the SVG render check
           ok=0
           for attempt in 1 2 3 4; do
             if apt-get update -o Acquire::Retries=5 &&
-               apt-get install -y -o Acquire::Retries=5 ca-certificates git yaru-theme-icon python3-pil python3-numpy  python3-scipy python3-pytest librsvg2-bin; then ok=1; break; fi
+               apt-get install -y -o Acquire::Retries=5 ca-certificates git yaru-theme-icon python3 python3-pil python3-numpy python3-scipy python3-pytest librsvg2-bin; then ok=1; break; fi
             echo "apt failed (attempt $attempt), retrying in 30 s"; sleep 30
           done
           [ "$ok" = 1 ]
 
+      - name: Print and check the environment
+        run: |
+          # Puts the numbers that identify the baseline into the log, so two runs can be compared, and fails
+          # early if the container or Yaru is not 26.04 (the template and assets/themes.json are from Yaru 26.04).
+          . /etc/os-release
+          echo "$PRETTY_NAME"
+          test "$VERSION_ID" = "26.04"
+          yaru="$(dpkg-query -W -f='${Version}' yaru-theme-icon)"
+          echo "yaru-theme-icon $yaru"
+          case "$yaru" in 26.04.*) ;; *) echo "::error::yaru-theme-icon $yaru is not from Ubuntu 26.04"; exit 1 ;; esac
+          python3 --version
+          python3 -m pytest --version
+          dpkg-query -W python3-pil python3-numpy python3-scipy librsvg2-bin git
+          echo "Yaru theme directories in /usr/share/icons: $(ls /usr/share/icons | grep -c '^Yaru')"
+          echo "running as: $(id -un)"
+
       - name: Unit and integration tests
-        run: python3 -m pytest -v
+        # -rs lists every skip with its reason at the end. In this container 4 are expected: two tests that need a
+        # non-root user (the job runs as root) and two GUI tests (no PyGObject, no display; the GUI is not part of CI).
+        run: python3 -m pytest -v -rs
 
       - name: Generate a sample set (four variants)
         run: |
           python3 folder-symbols batch --out dist --themes Yaru,Yaru-dark,Yaru-purple-dark,Yaru-sage --sizes 256 \
-            --only '^(a|c|d|e|network-w|share|view-)' --jobs 4 | tail -3
+            --only '^(a|c|d|e|network-w|share|view-)' --jobs 4 | tee /tmp/batch-png.txt | tail -3
+          # batch exits 0 even when single symbols fail, it only reports them: make that a failure
+          grep -q '^done, 0 symbols with errors' /tmp/batch-png.txt
           ls dist
 
       - name: Generate SVG sample set and check it renders
         run: |
           python3 folder-symbols batch --out dist-svg --themes all --sizes svg \
-            --only '^(a|c|d|e|network-w|share|view-)' --jobs 4 | tail -3
+            --only '^(a|c|d|e|network-w|share|view-)' --jobs 4 | tee /tmp/batch-svg.txt | tail -3
+          grep -q '^done, 0 symbols with errors' /tmp/batch-svg.txt
           test "$(find dist-svg -name '*.svg' | wc -l)" -gt 100
           for f in $(find dist-svg -name 'share.svg'); do rsvg-convert -w 128 "$f" > /dev/null; done
 
       - name: Help is printed without arguments
-        run: python3 folder-symbols | grep -q -- --skip-existing
+        run: |
+          # capture first: with pipefail, `grep -q` closing the pipe early could make the producer fail with SIGPIPE
+          help="$(python3 folder-symbols)"
+          grep -q -- --skip-existing <<< "$help"
 
       - name: Check generated icons are centred
         run: |
@@ -57,6 +108,7 @@ jobs:
           done
 
       - name: Contact sheets for eyeballing
+        # always runs, so the pictures are there to look at when an earlier step failed
         if: always()
         run: |
           mkdir -p sheets

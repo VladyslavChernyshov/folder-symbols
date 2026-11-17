@@ -6,31 +6,63 @@ name: full check
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   full:
-    runs-on: ubuntu-latest
+    # pinned host, same reasons as in test.yml
+    runs-on: ubuntu-26.04
     container: ubuntu:26.04
+    # all installed variants take longer than test.yml: generous, but a hang must not run for 6 hours
+    timeout-minutes: 60
+    defaults:
+      run:
+        # `sh -e` (the container default) has no pipefail, see test.yml
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies and the Yaru icon themes
         run: |
           # the Ubuntu archive is sometimes unreachable from the runners: retry instead of failing
+          # same package set and reasons as in test.yml
           ok=0
           for attempt in 1 2 3 4; do
             if apt-get update -o Acquire::Retries=5 &&
-               apt-get install -y -o Acquire::Retries=5 ca-certificates git yaru-theme-icon python3-pil python3-numpy  python3-scipy python3-pytest librsvg2-bin; then ok=1; break; fi
+               apt-get install -y -o Acquire::Retries=5 ca-certificates git yaru-theme-icon python3 python3-pil python3-numpy python3-scipy python3-pytest librsvg2-bin; then ok=1; break; fi
             echo "apt failed (attempt $attempt), retrying in 30 s"; sleep 30
           done
           [ "$ok" = 1 ]
 
+      - name: Print and check the environment
+        run: |
+          # same check as in test.yml: 26.04 container, Yaru from 26.04, versions in the log
+          . /etc/os-release
+          echo "$PRETTY_NAME"
+          test "$VERSION_ID" = "26.04"
+          yaru="$(dpkg-query -W -f='${Version}' yaru-theme-icon)"
+          echo "yaru-theme-icon $yaru"
+          case "$yaru" in 26.04.*) ;; *) echo "::error::yaru-theme-icon $yaru is not from Ubuntu 26.04"; exit 1 ;; esac
+          python3 --version
+          python3 -m pytest --version
+          dpkg-query -W python3-pil python3-numpy python3-scipy librsvg2-bin git
+          echo "Yaru theme directories in /usr/share/icons: $(ls /usr/share/icons | grep -c '^Yaru')"
+          echo "running as: $(id -un)"
+
       - name: Unit and integration tests
-        run: python3 -m pytest -q
+        # -rs: list the skips with their reasons (4 expected here, see test.yml)
+        run: python3 -m pytest -q -rs
 
       - name: Generate a sample set for every installed Yaru variant
         run: |
           python3 folder-symbols batch --icons-root /usr/share/icons --out dist --themes all --sizes 256 \
-            --only '^(a|c|d|e|network-w|share|view-)' | tail -3
+            --only '^(a|c|d|e|network-w|share|view-)' | tee /tmp/batch-png.txt | tail -3
+          # batch exits 0 even when single symbols fail, it only reports them: make that a failure
+          grep -q '^done, 0 symbols with errors' /tmp/batch-png.txt
+          echo "generated variants: $(ls -d dist/*/256 | wc -l)"
 
       - name: Check every generated icon is centred (all variants)
         run: |
