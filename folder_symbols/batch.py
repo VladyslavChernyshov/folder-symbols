@@ -52,14 +52,18 @@ def _work(job):
     return name, done, None
 
 
-def batch(a):
-    from multiprocessing import Pool
-    sizes = tuple(d for d in SIZE_DIRS if d not in NO_SYMBOL) if a.sizes == "all" \
-        else tuple(a.sizes.split(","))
+def _parse_sizes(spec):
+    """--sizes value -> (PNG sizes, whether "svg" was asked for)."""
+    sizes = tuple(d for d in SIZE_DIRS if d not in NO_SYMBOL) if spec == "all" \
+        else tuple(spec.split(","))
     svg = "svg" in sizes
-    sizes = tuple(sz for sz in sizes if sz != "svg")
-    root = a.icons_root or "/usr/share/icons"
-    if sizes or a.icons_root:        # PNG needs the theme directories; so does an explicit --icons-root
+    return tuple(sz for sz in sizes if sz != "svg"), svg
+
+
+def _pick_themes(themes_arg, icons_root, sizes):
+    """--themes value -> {theme: directory or name}; exits when a theme is not available."""
+    root = icons_root or "/usr/share/icons"
+    if sizes or icons_root:          # PNG needs the theme directories; so does an explicit --icons-root
         avail = installed_themes(root)
         themes_of = lambda t: f"{root}/{t}"
         where = root
@@ -67,11 +71,15 @@ def batch(a):
         avail = sorted(builtin_themes())
         themes_of = lambda t: t
         where = "the built-in table (assets/themes.json)"
-    want = avail if a.themes == "all" else [t for t in a.themes.split(",")]
+    want = avail if themes_arg == "all" else [t for t in themes_arg.split(",")]
     missing = [t for t in want if t not in avail]
     if missing:
         sys.exit(f"themes not found in {where}: {missing}\navailable: {avail}")
-    themes = {t: themes_of(t) for t in want}
+    return {t: themes_of(t) for t in want}
+
+
+def _drop_no_symbol(sizes):
+    """Validate the PNG sizes, report and drop those where Yaru draws no symbol."""
     for sz in sizes:
         size_dir(sz)                                   # validate early
     skipped = [sz for sz in sizes if size_dir(sz) in NO_SYMBOL]
@@ -79,11 +87,23 @@ def batch(a):
         print(f"skipping {', '.join(skipped)}: Yaru draws no symbol at 16 px, the output would "
               "just be copies of the plain folder", flush=True)
         sizes = tuple(sz for sz in sizes if size_dir(sz) not in NO_SYMBOL)
-    syms = find_symbols(a.symbols_dir, a.only)
+    return sizes
+
+
+def _summary_line(n_syms, n_themes, svg, sizes):
     fmts = len(sizes) + svg
-    print(f"{len(syms)} symbols x {len(themes)} themes x {fmts} output{'s' if fmts != 1 else ''} "
-          f"({', '.join((['svg'] if svg else []) + list(sizes))}) = "
-          f"{len(syms) * len(themes) * fmts} icons", flush=True)
+    return (f"{n_syms} symbols x {n_themes} themes x {fmts} output{'s' if fmts != 1 else ''} "
+            f"({', '.join((['svg'] if svg else []) + list(sizes))}) = "
+            f"{n_syms * n_themes * fmts} icons")
+
+
+def batch(a):
+    from multiprocessing import Pool
+    sizes, svg = _parse_sizes(a.sizes)
+    themes = _pick_themes(a.themes, a.icons_root, sizes)
+    sizes = _drop_no_symbol(sizes)
+    syms = find_symbols(a.symbols_dir, a.only)
+    print(_summary_line(len(syms), len(themes), svg, sizes), flush=True)
     opts = dict(out=a.out, scale=a.scale, align=a.align, skip_existing=a.skip_existing,
                 overrides=load_overrides(a.overrides), solid=not a.keep_opacity)
     errors = 0
