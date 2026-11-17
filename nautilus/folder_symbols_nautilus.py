@@ -19,10 +19,7 @@ import threading
 
 import gi
 
-try:
-    gi.require_version("Nautilus", "4.1")   # Ubuntu 26.04 (Nautilus 50)
-except ValueError:
-    gi.require_version("Nautilus", "4.0")   # Ubuntu 24.04 (Nautilus 46)
+gi.require_version("Nautilus", "4.1")   # Ubuntu 26.04 (Nautilus 50)
 from gi.repository import GObject, Nautilus  # noqa: E402
 
 ITEM_NAME = "FolderSymbols::ChooseIcon"

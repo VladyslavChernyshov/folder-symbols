@@ -133,18 +133,15 @@ def items(mod, files):
 # ---------------------------------------------------------------------------
 
 def test_requires_nautilus_4_1(monkeypatch):
-    mod = load(monkeypatch, available=("4.1", "4.0"))
+    mod = load(monkeypatch)
     assert mod.gi_required == [("Nautilus", "4.1")]
 
 
-def test_falls_back_to_nautilus_4_0(monkeypatch):
-    mod = load(monkeypatch, available=("4.0",))
-    assert mod.gi_required == [("Nautilus", "4.1"), ("Nautilus", "4.0")]
-
-
-def test_no_nautilus_at_all_fails_to_load(monkeypatch):
+@pytest.mark.parametrize("available", [(), ("4.0",)])
+def test_no_nautilus_4_1_fails_to_load(monkeypatch, available):
+    """Without the 4.1 typelib the module does not load (no 4.0 fallback); Nautilus itself is unaffected."""
     with pytest.raises(ValueError):
-        load(monkeypatch, available=())
+        load(monkeypatch, available=available)
 
 
 def test_extension_imports_only_stdlib_and_gi():
