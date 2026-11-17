@@ -1,9 +1,12 @@
 """Self-tests of the GUI harness (--self-test): each one must give the verdict in its expect field. They show
 that the harness can report NOT VERIFIED, a watchdog timeout, a window closed by someone else, a blocked
-main loop killed by the parent, a wait that needs no iteration, a wait's own timeout, and that the real
-application id on the private bus leaves the real session bus alone. Z5 needs a person and runs only when
-asked for by its exact id."""
+main loop killed by the parent, that wait_until counts real main-loop iterations, a wait's own timeout,
+that the real application id on the private bus leaves the real session bus alone, a crash or a non-zero
+exit after the end event, an application diagnostic on stderr, a window closed before the scenario started,
+and a malformed event line. Z5 needs a person and runs only when asked for by its exact id."""
 import os
+import signal
+import sys
 
 from registry import FAIL, INCOMPLETE, NOT_VERIFIED, PASS, scenario
 
@@ -57,13 +60,33 @@ def z5(d):
     d.wait_until(lambda: False, "you to close the window", timeout=30)
 
 
-@scenario("Z6", "a condition that already holds needs no iteration", selftest=True,
-          steps=("window shown", "condition already true"), expect=(PASS, ""))
+@scenario("Z6", "wait_until counts real main-loop iterations (none when the condition already holds)",
+          selftest=True, steps=("window shown", "condition already true", "condition true after three iterations"),
+          expect=(PASS, ""))
 def z6(d):
     d.step("window shown")
     d.wait_window()
-    d.step("condition already true")
-    d.check("iterations", d.wait_until(lambda: True, "a condition that holds"), 0)
+    # An idle source that is always ready at a priority above everything else is dispatched exactly once
+    # per main-context iteration: an independent count of the iterations.
+    ticks = [0]
+
+    def tick():
+        ticks[0] += 1
+        return d.GLib.SOURCE_CONTINUE
+
+    source = d.GLib.idle_add(tick, priority=d.GLib.PRIORITY_HIGH)
+    try:
+        d.step("condition already true")
+        start = ticks[0]
+        d.check("iterations returned", d.wait_until(lambda: True, "a condition that holds"), 0)
+        d.check("main-loop iterations counted", ticks[0] - start, 0)
+        d.step("condition true after three iterations")
+        start = ticks[0]
+        d.check("iterations returned", d.wait_until(lambda: ticks[0] >= start + 3, "three iterations"), 3)
+        d.check("main-loop iterations counted", ticks[0] - start, 3)
+        d.check("last_iterations", d.last_iterations, 3)
+    finally:
+        d.GLib.source_remove(source)
 
 
 @scenario("Z7", "a wait's own timeout, shorter than the watchdog", selftest=True,
@@ -77,7 +100,7 @@ def z7(d):
 
 
 @scenario("Z8", "the real application id on the private bus leaves the real session bus alone", selftest=True,
-          app_id="real", needs_private_bus=True,
+          app_id="real", needs_real_bus=True,
           steps=("window shown", "real id on the private bus", "parent's real-bus check"), expect=(PASS, ""))
 def z8(d):
     d.step("window shown")
@@ -87,7 +110,55 @@ def z8(d):
     d.check("application id", d.app.get_application_id(), APP_ID)
     d.step("parent's real-bus check")
     reply = d.wait_parent()
-    d.check("names with GuiCheck on the real bus", reply["guicheck"], [])
+    # No "*GuiCheck*" check here: this scenario runs the real id, which has no GuiCheck in it, so it could
+    # never find one (the parent still checks it, as for every scenario).
     d.check("owner of the real id on the real bus unchanged", reply["real_owner_unchanged"], True)
     d.check("the real id on the real bus is not owned by this process",
             reply["real_owner_pid"] != os.getpid(), True)
+
+
+@scenario("Z9", "killed by a signal during shutdown, after the end event: FAIL", selftest=True,
+          steps=("window shown",), expect=(FAIL, "killed by SIGKILL after the end event"))
+def z9(d):
+    d.step("window shown")
+    d.wait_window()
+    # SIGKILL, not SIGSEGV or SIGABRT: no core file and no crash report
+    d.app.connect("shutdown", lambda _app: os.kill(os.getpid(), signal.SIGKILL))
+
+
+@scenario("Z10", "a non-zero exit during shutdown, after the end event: FAIL", selftest=True,
+          steps=("window shown",), expect=(FAIL, "exited with code 3 after the end event"))
+def z10(d):
+    d.step("window shown")
+    d.wait_window()
+    d.app.connect("shutdown", lambda _app: os._exit(3))
+
+
+@scenario("Z11", "an application diagnostic (folder-symbols: ...) on stderr: FAIL", selftest=True,
+          needs_display=False, steps=("print a diagnostic",),
+          expect=(FAIL, "unexpected stderr line: folder-symbols: injected by the self-test"))
+def z11(d):
+    d.step("print a diagnostic")
+    print("folder-symbols: injected by the self-test", file=sys.stderr, flush=True)
+
+
+def close_before_start(d):
+    """Close the window from outside the driver before the driver's idle callback (DEFAULT_IDLE) runs."""
+    def added(_app, window):
+        d.GLib.idle_add(lambda: window.close() or False, priority=d.GLib.PRIORITY_HIGH_IDLE)
+    d.app.connect("window-added", added)
+
+
+@scenario("Z12", "the window is closed before the scenario starts: INCOMPLETE", selftest=True,
+          on_start=close_before_start, steps=("window shown",),
+          expect=(INCOMPLETE, "WINDOW CLOSED BY THE USER before the scenario started (step 0 of 1)"))
+def z12(d):
+    d.step("window shown")
+    d.wait_window()
+
+
+@scenario("Z13", "a malformed event line from the scenario process: FAIL", selftest=True, needs_display=False,
+          steps=("write a malformed line",), expect=(FAIL, "malformed event line from the child: 'not json {'"))
+def z13(d):
+    d.step("write a malformed line")
+    os.write(int(os.environ["GUI_CHECK_RESULT_FD"]), b"not json {\n")

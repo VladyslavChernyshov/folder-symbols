@@ -21,10 +21,11 @@ class Scenario:
     watchdog: int = 30                # seconds, the scenario's GLib watchdog
     kill_after: int = 10              # seconds after the watchdog at which the parent kills the child
     app_id: str = "test"              # "test": the random test id; "real": the real id (private bus only)
-    needs_private_bus: bool = False   # NOT VERIFIED when the run has no verified private bus
+    needs_real_bus: bool = False      # NOT VERIFIED when the harness process has no session bus to compare with
     force_symbols: Optional[str] = None   # "fixture": always evaluated as if Yaru were absent
     allowed_stderr: tuple = ()        # exact full stderr lines this scenario may print (with reasons)
     expect: Optional[tuple] = None    # self-tests: (verdict, text the reason must contain[, text it must not])
+    on_start: Optional[Callable] = None   # self-tests: on_start(driver) before app.run(), ahead of the body
 
     @property
     def opens_window(self):

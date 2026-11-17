@@ -3,8 +3,10 @@
 The expected texts are literals copied from the code (appinfo.py, selection.py, outcome.py), so a changed
 text in the application shows up here as a difference. No GTK import at module level: the parent reads
 only the metadata; the bodies get GTK through the driver (d.Gtk, d.GLib)."""
+import os
+
 import fixtures
-from registry import scenario
+from registry import Fail, scenario
 
 APP_TITLE = "Folder Symbols"
 WELCOME_TITLE = "Choose a folder"
@@ -17,6 +19,9 @@ RESET_ONE = "Give the folder its normal icon again"
 RESET_ONE_OF_SEVERAL = "Give the one folder with an icon from Folder Symbols its normal icon again"
 NO_FOLDER = "folder-symbols-gui: no existing folder among the given paths"
 NO_CALLS = {"apply": 0, "reset": 0, "plan_cleanup": 0, "run_cleanup": 0}
+# The plain folder's preview: PreviewSession.build_plain writes "{variant}-plain.svg"; the gsettings stub
+# reports the icon theme 'Yaru' (orange) and the keyfile pins the light style, so the variant is "Yaru".
+PLAIN_PREVIEW = "Yaru-plain.svg"
 SEARCH = "view"
 CATEGORY = "actions"
 
@@ -99,7 +104,7 @@ def prepare_a2(ctx):
 
 
 @scenario("A2", "start with one folder without a manifest entry", prepare=prepare_a2,
-          steps=("window shown", "main page", "gallery", "buttons", "no backend calls"))
+          steps=("window shown", "main page", "gallery", "buttons", "plain preview", "no backend calls"))
 def a2(d):
     d.step("window shown")
     win = d.wait_window()
@@ -114,6 +119,14 @@ def a2(d):
     d.check("gallery selection", d.selected_name(), None)
     d.step("buttons")
     check_buttons(d, (False, APPLY_NEEDS_SYMBOL), ("Reset", False, RESET_NOT_RECORDED))
+    d.step("plain preview")
+    # The file icon build_plain wrote, not the theme "folder" icon that gui/preview.py falls back to.
+    d.check("preview file", d.preview_file(), PLAIN_PREVIEW)
+    gicon = d.find_one("preview-image").get_gicon()
+    path = gicon.get_file().get_path() if isinstance(gicon, d.Gio.FileIcon) else None
+    run_dir = os.path.realpath(os.environ["GUI_CHECK_RUN_DIR"]) + os.sep
+    d.check("preview file exists under the run directory",
+            bool(path) and os.path.isfile(path) and os.path.realpath(path).startswith(run_dir), True)
     d.step("no backend calls")
     d.check("backend calls", d.backend.calls(), NO_CALLS)
 
@@ -236,12 +249,22 @@ def a5(d):
     d.step("category set")
     after_search = d.grid_model().get_n_items()
     header.activate_action("gallery.category", d.GLib.Variant.new_string(CATEGORY))
-    d.wait_until(lambda: header.get_property("category") == CATEGORY, f"the category {CATEGORY!r} to be set")
+    try:
+        d.wait_until(lambda: header.get_property("category") == CATEGORY
+                     and d.grid_model().get_n_items() < after_search,
+                     f"the category {CATEGORY!r} to narrow the grid", timeout=5)
+    except Fail:
+        if d.watchdog_fired:
+            raise
+        # the checks below record what did not happen
+    after_category = d.grid_model().get_n_items()
+    d.check("category", header.get_property("category"), CATEGORY)
+    d.check(f"category narrows the grid ({after_category} < {after_search})", after_category < after_search, True)
     if ctx.symbols_source == "fixture":
-        d.check("symbols matching search and category", d.grid_model().get_n_items(),
-                fixture_matches(SEARCH, CATEGORY))
+        expected = fixture_matches(SEARCH, CATEGORY)
     else:
-        d.check("category narrows the grid or keeps it", d.grid_model().get_n_items() <= after_search, True)
+        expected = fixtures.count_matching(ctx.symbols_dir, SEARCH, CATEGORY)
+    d.check("symbols matching search and category", after_category, expected)
     d.step("manifest edited")
     ctx.record(ctx.videos, ctx.s3, "purple")         # after the start: a cached state would show s2/blue
     d.step("second launch")

@@ -3,13 +3,12 @@
 it and checks states and texts. Local only: not part of `make check`, not run in CI.
 
   python3 tools/gui_check [-k ID[,ID...]] [--display xvfb|session] [--symbols auto|yaru|fixture]
-                          [--self-test] [--list] [--out DIR] [--keep] [--invisible] [--allow-shared-bus]
-                          [--scan-leftovers]
+                          [--self-test] [--list] [--out DIR] [--keep] [--scan-leftovers]
   make gui-check GUI_CHECK_ARGS="-k A5"
 
 Each scenario runs in its own process (child.py) with an environment built from an allowlist:
   - a fresh HOME and XDG directories under the run directory, and a manifest fixture;
-  - a private dbus-daemon of its own (no service directories, socket under the run directory);
+  - a private dbus-daemon of its own (no service directories, socket under the run directory; required);
   - a random test application id;
   - stub `gio` and `gsettings` commands;
   - the harness's own Xvfb (--display xvfb, the default) or your screen (--display session: a warning,
@@ -26,6 +25,7 @@ import json
 import os
 import random
 import select
+import shlex
 import shutil
 import signal
 import string
@@ -52,6 +52,9 @@ SOCKET_MAX = 107                     # sun_path holds 108 bytes with the final N
 STARTUP_TIMEOUT = 10                 # seconds for Xvfb and dbus-daemon to report their address
 GSETTINGS_ALLOWED = "gsettings get org.gnome.desktop.interface icon-theme"
 STDERR_BAD = ("Traceback", "-CRITICAL", "-WARNING", "-ERROR")
+STDERR_BAD_PREFIX = "folder-symbols:"   # the application's own diagnostics (for example gui/preview.py)
+TOOLS_PATH = "/usr/bin:/bin"         # PATH of the processes the harness starts, and where it looks for them
+DISPLAY_MODES = ("xvfb", "session")
 EXIT_OK, EXIT_FAIL, EXIT_SETUP, EXIT_NOT_VERIFIED = 0, 1, 2, 3
 BUS_CONF = """<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
@@ -69,12 +72,12 @@ BUS_CONF = """<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configur
 </busconfig>
 """
 GIO_STUB = """#!/bin/sh
-printf '%s\\n' "gio $*" >> "{log}"
+printf '%s\\n' "gio $*" >> {log}
 echo "gio is disabled by the GUI harness" >&2
 exit 99
 """
 GSETTINGS_STUB = """#!/bin/sh
-printf '%s\\n' "gsettings $*" >> "{log}"
+printf '%s\\n' "gsettings $*" >> {log}
 if [ "$*" = "get org.gnome.desktop.interface icon-theme" ]; then echo "'Yaru'"; exit 0; fi
 echo "gsettings: only 'get org.gnome.desktop.interface icon-theme' is allowed by the GUI harness" >&2
 exit 99
@@ -88,6 +91,13 @@ class SetupError(Exception):
 
 def say(text=""):
     print(text, flush=True)
+
+
+def signal_name(number):
+    try:
+        return signal.Signals(number).name
+    except ValueError:
+        return f"signal {number}"
 
 
 def random_suffix(n=10):
@@ -161,6 +171,7 @@ class Result:
         self.verdict, self.reason = None, None
         self.details = []                # lines printed under the scenario's line
         self.events = []
+        self.bad_events = []             # raw text of event lines that are not valid events
         self.seconds = 0.0
         self.allowed_seen = []           # allowlisted stderr lines that appeared
 
@@ -178,31 +189,40 @@ class Run:
         self.real_bus = RealBus()
         self.preflight_shown = False
         self.windows_opened = 0
-        self.visible = False             # True when windows appear on your screen (--display session)
+        self.tools = {}                  # name -> absolute path, looked up in TOOLS_PATH
 
     # ------------------------------------------------------------- processes
     def spawn(self, argv, env, **kwargs):
         """Start argv under pdeath_exec, in its own process group, with exactly this environment."""
         p = subprocess.Popen([sys.executable, PDEATH, str(os.getpid()), *argv], env=env,
                              start_new_session=True, **kwargs)
+        p.pgid = p.pid                    # start_new_session: p leads its own group; None once stopped
         self.procs.append(p)
         return p
 
     @staticmethod
     def stop(p, grace=3):
-        """Stop p's whole process group: SIGTERM, then SIGKILL after grace seconds; also sweeps members
-        that outlived the group leader."""
-        if p.poll() is None:
-            try:
-                os.killpg(p.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                p.wait(grace)
-            except subprocess.TimeoutExpired:
-                pass
+        """Stop p's whole process group once: SIGTERM, then (after p exited or grace seconds) SIGKILL to
+        sweep members that outlived the leader, then reap p. Both signals are sent while p is not yet
+        reaped (an exited p stays a zombie, which keeps its pid, so the group id cannot have been reused).
+        A process that was stopped before, or reaped elsewhere (poll, wait), is not signalled."""
+        pgid, p.pgid = getattr(p, "pgid", None), None
+        if pgid is None or p.returncode is not None:
+            return
         try:
-            os.killpg(p.pid, signal.SIGKILL)
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            try:
+                if os.waitid(os.P_PID, p.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+                    break                 # exited, not reaped
+            except ChildProcessError:
+                break
+            time.sleep(0.02)
+        try:
+            os.killpg(pgid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
         try:
@@ -216,7 +236,7 @@ class Run:
         self.procs = []
 
     def base_env(self, extra=None):
-        env = {"PATH": "/usr/bin:/bin", "HOME": os.path.join(self.dir, "home-tools"), "LANG": "C.UTF-8",
+        env = {"PATH": TOOLS_PATH, "HOME": os.path.join(self.dir, "home-tools"), "LANG": "C.UTF-8",
                "TMPDIR": os.path.join(self.dir, "tmp"), MARKER: self.run_id}
         env.update(extra or {})
         return env
@@ -242,22 +262,29 @@ class Run:
         return data.split(b"\n", 1)[0].decode().strip()
 
     # ------------------------------------------------------------- setup
-    def setup(self):
+    def scenario_dir(self, sc):
+        return os.path.join(self.dir, f"s-{sc.id}")
+
+    @staticmethod
+    def socket_path(sdir):
+        return os.path.join(sdir, "bus", "socket")
+
+    def setup(self, chosen):
         args = self.args
-        base = args.out or None
-        if base:
-            os.makedirs(base, exist_ok=True)
-        self.dir = tempfile.mkdtemp(prefix="gui-check-", dir=base)
+        base = os.path.abspath(args.out or tempfile.gettempdir())     # Python < 3.12: mkdtemp keeps it relative
+        os.makedirs(base, exist_ok=True)
+        self.dir = os.path.abspath(tempfile.mkdtemp(prefix="gui-check-", dir=base))
         for sub in ("bin", "tmp", "cache", "home-tools"):
             os.makedirs(os.path.join(self.dir, sub))
-        sample = os.path.join(self.dir, "s-A2b", "bus", "socket")
-        if len(sample.encode()) > SOCKET_MAX:
-            raise SetupError(f"the run directory {self.dir} is too long for a D-Bus socket path; use --out with "
-                             "a shorter directory")
+        for sc in chosen:
+            socket = self.socket_path(self.scenario_dir(sc))
+            if len(socket.encode()) > SOCKET_MAX:
+                raise SetupError(f"the D-Bus socket path of {sc.id}, {socket}, is longer than {SOCKET_MAX} bytes; "
+                                 "use --out with a shorter directory")
         self.gio_log = os.path.join(self.dir, "gio.log")
         self.gsettings_log = os.path.join(self.dir, "gsettings.log")
-        for name, text in (("gio", GIO_STUB.format(log=self.gio_log)),
-                           ("gsettings", GSETTINGS_STUB.format(log=self.gsettings_log))):
+        for name, text in (("gio", GIO_STUB.format(log=shlex.quote(self.gio_log))),
+                           ("gsettings", GSETTINGS_STUB.format(log=shlex.quote(self.gsettings_log)))):
             path = os.path.join(self.dir, "bin", name)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
@@ -278,48 +305,56 @@ class Run:
                          + ("" if has_yaru else f"; no real Yaru under {yaru_dir}"))
 
         # bus
-        self.private_bus = shutil.which("dbus-daemon") is not None
-        if not self.private_bus:
-            if not args.allow_shared_bus:
-                raise SetupError("dbus-daemon not found: the harness needs a private bus (install dbus-daemon), "
-                                 "or pass --allow-shared-bus to run with a weaker isolation")
-            self.info.append("WEAKER ISOLATION: no private bus (random id on the real bus)")
+        self.tools["dbus-daemon"] = shutil.which("dbus-daemon", path=TOOLS_PATH)
+        if self.tools["dbus-daemon"] is None:
+            raise SetupError(f"dbus-daemon not found in {TOOLS_PATH}: the harness needs a private session bus; "
+                             "install it (Ubuntu: sudo apt install dbus-daemon)")
+        self.real_bus_id, self.real_names_before, self.real_owner_before = None, [], None
         if self.real_bus.connection is not None:
-            self.real_bus_id = self.real_bus.bus_id()
-            self.real_names_before = sorted(n for n in self.real_bus.names() if "FolderSymbols" in n)
-            self.real_owner_before = self.real_bus.owner_pid(REAL_APP_ID)
+            from gi.repository import GLib
+            try:
+                self.real_bus_id = self.real_bus.bus_id()
+                self.real_names_before = sorted(n for n in self.real_bus.names() if "FolderSymbols" in n)
+                self.real_owner_before = self.real_bus.owner_pid(REAL_APP_ID)
+            except GLib.Error as e:
+                self.real_bus.connection, self.real_bus.error = None, str(e)
+                self.real_bus_id, self.real_names_before = None, []
+        if self.real_bus.connection is not None:
             self.info.append(f"real session bus: id {self.real_bus_id}; names with FolderSymbols before the run: "
                              f"{self.real_names_before or 'none'} (informational)")
         else:
-            self.real_bus_id, self.real_names_before, self.real_owner_before = None, [], None
-            self.info.append("real session bus: none found (the checks during the run are skipped)")
+            error = getattr(self.real_bus, "error", None)
+            self.info.append("real session bus: none in the harness process"
+                             + (f" ({error})" if error else " (DBUS_SESSION_BUS_ADDRESS is not set)")
+                             + "; not checked: that the private bus id differs from the real one, that no GuiCheck "
+                             "name appears on the real bus while a scenario runs, and the owner of the real id; "
+                             "Z8 is NOT VERIFIED. The private-bus checks (socket, activatable names, name owner) "
+                             "still run")
         self.info.append(f"test application id: {self.test_app_id}")
 
         # display
         if args.display == "xvfb":
-            if shutil.which("Xvfb") is None:
-                raise SetupError("Xvfb not found: install it (Ubuntu: xvfb, openSUSE: xorg-x11-server-Xvfb), "
-                                 "or use --display session")
-            if args.invisible:
-                raise SetupError("--invisible is only for --display session")
+            self.tools["Xvfb"] = shutil.which("Xvfb", path=TOOLS_PATH)
+            if self.tools["Xvfb"] is None:
+                raise SetupError(f"Xvfb not found in {TOOLS_PATH}: install it (Ubuntu: xvfb, openSUSE: "
+                                 "xorg-x11-server-Xvfb), or use --display session")
             self.start_xvfb()
         else:
-            self.visible = not args.invisible
-            if args.invisible:
-                self.check_invisible()
             what = os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")
             if not what:
                 raise SetupError("--display session: neither WAYLAND_DISPLAY nor DISPLAY is set")
             self.info.append(f"display: session ({'WAYLAND_DISPLAY=' + os.environ['WAYLAND_DISPLAY'] if os.environ.get('WAYLAND_DISPLAY') else 'DISPLAY=' + os.environ['DISPLAY']})"
-                             + ("; declared invisible" if args.invisible else "; windows appear on your screen"))
-            if self.visible and shutil.which("notify-send") is None:
-                self.info.append("notify-send not found: the warning before each window is printed only")
+                             "; windows appear on your screen")
+            self.tools["notify-send"] = shutil.which("notify-send", path=TOOLS_PATH)
+            if self.tools["notify-send"] is None:
+                self.info.append(f"notify-send not found in {TOOLS_PATH}: the warning before each window is "
+                                 "printed only")
 
     def start_xvfb(self):
         log = os.path.join(self.dir, "xvfb.log")
         r, w = os.pipe()
         with open(log, "w") as out:
-            self.xvfb = self.spawn(["Xvfb", "-displayfd", str(w), "-screen", "0", "1280x1024x24", "-nolisten", "tcp"],
+            self.xvfb = self.spawn([self.tools["Xvfb"], "-displayfd", str(w), "-screen", "0", "1280x1024x24", "-nolisten", "tcp"],
                                    self.base_env(), pass_fds=(w,), stdout=out, stderr=subprocess.STDOUT)
         os.close(w)
         number = self.read_line_from(r, self.xvfb, "Xvfb", log)
@@ -329,29 +364,17 @@ class Run:
         self.info.append(f"display: xvfb {self.display} (pid {self.xvfb.pid}, the harness's own; no window manager; "
                          "GSK_RENDERER=cairo)")
 
-    def check_invisible(self):
-        try:
-            out = subprocess.run(["systemctl", "--user", "show-environment"], capture_output=True, text=True,
-                                 timeout=5, check=True).stdout
-        except (OSError, subprocess.SubprocessError) as e:
-            raise SetupError(f"--invisible: cannot read your session's display (systemctl --user: {e}); refused")
-        session = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
-        for key in ("WAYLAND_DISPLAY", "DISPLAY"):
-            if os.environ.get(key) and os.environ.get(key) == session.get(key):
-                raise SetupError(f"--invisible: {key}={os.environ[key]} is your session's display; refused")
-
     # ------------------------------------------------------------- one scenario
     def start_bus(self, sdir):
-        busdir = os.path.join(sdir, "bus")
-        os.makedirs(busdir, mode=0o700)
-        socket = os.path.join(busdir, "socket")
+        socket = self.socket_path(sdir)
+        os.makedirs(os.path.dirname(socket), mode=0o700)
         conf = os.path.join(sdir, "bus.conf")
         with open(conf, "w", encoding="utf-8") as f:
             f.write(BUS_CONF.format(socket=socket))
         log = os.path.join(sdir, "dbus-daemon.log")
         r, w = os.pipe()
         with open(log, "w") as out:
-            p = self.spawn(["dbus-daemon", f"--config-file={conf}", "--nofork", f"--print-address={w}"],
+            p = self.spawn([self.tools["dbus-daemon"], f"--config-file={conf}", "--nofork", f"--print-address={w}"],
                            self.base_env(), pass_fds=(w,), stdout=out, stderr=subprocess.STDOUT)
         os.close(w)
         return p, self.read_line_from(r, p, "dbus-daemon", log)
@@ -392,7 +415,6 @@ class Run:
             "GUI_CHECK_REAL_BUS_ID": self.real_bus_id or "",
             "GUI_CHECK_REAL_APP_ID": REAL_APP_ID,
             "GUI_CHECK_TEST_APP_ID": self.test_app_id,
-            "GUI_CHECK_PRIVATE_BUS": "1" if self.private_bus else "0",
             "GUI_CHECK_SYMBOLS_SOURCE": source,
             "GUI_CHECK_RESULT_FD": str(result_fd),
             "GUI_CHECK_CONTROL_FD": str(control_fd),
@@ -400,10 +422,7 @@ class Run:
         os.makedirs(env["XDG_DATA_HOME"])
         if sc.app_id == "test":
             env["FOLDER_SYMBOLS_APP_ID"] = self.test_app_id
-        if bus_address:
-            env["DBUS_SESSION_BUS_ADDRESS"] = bus_address
-        elif os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
-            env["DBUS_SESSION_BUS_ADDRESS"] = os.environ["DBUS_SESSION_BUS_ADDRESS"]
+        env["DBUS_SESSION_BUS_ADDRESS"] = bus_address
         if self.args.display == "xvfb":
             runtime = os.path.join(sdir, "runtime")
             os.makedirs(runtime, mode=0o700)
@@ -416,9 +435,9 @@ class Run:
 
     def warn_before_window(self):
         say(WARNING)
-        if shutil.which("notify-send"):
+        if self.tools.get("notify-send"):
             try:
-                subprocess.run(["notify-send", "Folder Symbols GUI check", WARNING], timeout=5,
+                subprocess.run([self.tools["notify-send"], "Folder Symbols GUI check", WARNING], timeout=5,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except (OSError, subprocess.SubprocessError):
                 pass
@@ -428,8 +447,13 @@ class Run:
         """The real-bus check while a child is up: no *GuiCheck* name, the real id's owner unchanged."""
         if self.real_bus.connection is None:
             return {"guicheck": [], "real_owner_unchanged": None, "real_owner_pid": None, "skipped": True}
-        names = self.real_bus.names()
-        owner = self.real_bus.owner_pid(REAL_APP_ID)
+        from gi.repository import GLib
+        try:
+            names = self.real_bus.names()
+            owner = self.real_bus.owner_pid(REAL_APP_ID)
+        except GLib.Error as e:
+            return {"guicheck": None, "real_owner_unchanged": None, "real_owner_pid": None, "skipped": False,
+                    "error": str(e)}
         return {"guicheck": sorted(n for n in names if "GuiCheck" in n),
                 "real_owner_unchanged": owner == self.real_owner_before, "real_owner_pid": owner,
                 "skipped": False}
@@ -440,23 +464,18 @@ class Run:
         if sc.needs_yaru and source != "yaru":
             res.verdict, res.reason = NOT_VERIFIED, "no real Yaru symbols (only the generated fixture)"
             return res
-        if sc.needs_private_bus and not self.private_bus:
-            res.verdict, res.reason = NOT_VERIFIED, "no verified private bus (--allow-shared-bus)"
-            return res
-        if sc.needs_private_bus and self.real_bus.connection is None:
+        if sc.needs_real_bus and self.real_bus.connection is None:
             res.verdict, res.reason = NOT_VERIFIED, "no real session bus to compare with"
             return res
-        sdir = os.path.join(self.dir, f"s-{sc.id}")
+        sdir = self.scenario_dir(sc)
         os.makedirs(sdir)
         bus = None
         try:
-            address = None
-            if self.private_bus:
-                bus, address = self.start_bus(sdir)
+            bus, address = self.start_bus(sdir)
             r, w = os.pipe()
             cr, cw = os.pipe()
             env, _source = self.child_env(sc, sdir, address, w, cr)
-            if sc.opens_window and self.args.display == "session" and self.visible:
+            if sc.opens_window and self.args.display == "session":
                 self.warn_before_window()
             if sc.opens_window:
                 self.windows_opened += 1
@@ -492,7 +511,7 @@ class Run:
         the start. Returns the number of seconds after which it was killed, or None."""
         limit = sc.watchdog + sc.kill_after
         buf, killed = b"", None
-        with open(os.path.join(self.dir, f"s-{sc.id}", "events.jsonl"), "w") as log:
+        with open(os.path.join(self.scenario_dir(sc), "events.jsonl"), "w") as log:
             while True:
                 remaining = started + limit - time.monotonic()
                 if remaining <= 0:
@@ -508,9 +527,16 @@ class Run:
                 buf += chunk
                 while b"\n" in buf:
                     raw, buf = buf.split(b"\n", 1)
-                    log.write(raw.decode() + "\n")
+                    text = raw.decode(errors="replace")
+                    log.write(text + "\n")
                     log.flush()                  # readable while the scenario runs, and after a crash
-                    event = json.loads(raw)
+                    try:
+                        event = json.loads(raw)
+                    except ValueError:           # not JSON, or not UTF-8
+                        event = None
+                    if not isinstance(event, dict) or not isinstance(event.get("t"), str):
+                        res.bad_events.append(text)
+                        continue
                     res.events.append(event)
                     if event["t"] == "ready":
                         reply = self.real_bus_reply(event)
@@ -544,7 +570,8 @@ class Run:
         for line in stderr:
             if line in sc.allowed_stderr:
                 res.allowed_seen.append(line)
-            elif any(b in line for b in STDERR_BAD) or "warning" in line.lower():
+            elif (any(b in line for b in STDERR_BAD) or "warning" in line.lower()
+                  or line.startswith(STDERR_BAD_PREFIX)):
                 bad.append(line)
         for e in res.events:
             if e["t"] == "log":
@@ -557,19 +584,32 @@ class Run:
             res.details.extend(end.get("differences", [])[:3])
             if len(end.get("differences", [])) > 3:
                 res.details.append(f"... and {len(end['differences']) - 3} more differences (see events.jsonl)")
+            if child.returncode:                  # the process must also end cleanly after its result
+                line = (f"killed by {signal_name(-child.returncode)} after the end event" if child.returncode < 0
+                        else f"exited with code {child.returncode} after the end event")
+                if res.verdict == INCOMPLETE:
+                    res.details.append(f"the end event said {INCOMPLETE}: {res.reason}")
+                    res.verdict = None
+                self.fail(res, line)
         elif child.returncode is not None and child.returncode < 0:
             res.verdict = FAIL
-            res.reason = f"killed by {signal.Signals(-child.returncode).name}; {last}"
-        elif self.args.display == "session" and sc.opens_window and not bad:
+            res.reason = f"killed by {signal_name(-child.returncode)}; {last}"
+        elif self.args.display == "session" and sc.opens_window and not stderr:
             res.verdict = INCOMPLETE
-            res.reason = f"the process ended early with no error line: most likely closed by the user; {last}"
+            res.reason = f"the process ended early with an empty stderr: most likely closed by the user; {last}"
         else:
             res.verdict = FAIL
             res.reason = f"the scenario process ended (status {child.returncode}) without a result; {last}"
+        for text in res.bad_events:
+            self.fail(res, f"malformed event line from the child: {text!r}")
         for line in bad:
             self.fail(res, f"unexpected stderr line: {line}")
         reply = getattr(res, "real_bus", None)
-        if reply and reply["guicheck"]:
+        if reply and reply.get("error"):
+            self.fail(res, f"real-bus check failed: {reply['error']}")
+        elif reply and reply["skipped"]:
+            res.details.append("info: real-bus names not checked (no session bus in the harness process)")
+        elif reply and reply["guicheck"]:
             self.fail(res, f"names with GuiCheck on the real bus while the scenario ran: {reply['guicheck']}")
         if not self.preflight_shown and any(e["t"] == "preflight" for e in res.events):
             self.preflight_shown = True
@@ -580,9 +620,7 @@ class Run:
 
     # ------------------------------------------------------------- the whole run
     def finish_checks(self):
-        if self.xvfb is not None:
-            self.stop(self.xvfb)
-        self.cleanup()
+        self.cleanup()                   # Xvfb too, once: stop() never signals a group a second time
         left = scan_processes(self.run_id)
         self.info.append(f"processes left behind after the run (scan of /proc/*/environ for {MARKER}={self.run_id}): "
                          + (", ".join(f"{pid} {cmd}" for pid, cmd in left) if left else "none"))
@@ -599,9 +637,14 @@ class Run:
         if others:
             self.run_failures.append(f"unexpected gsettings calls: {others[:5]}")
         if self.real_bus.connection is not None:
-            after = sorted(n for n in self.real_bus.names() if "FolderSymbols" in n)
-            self.info.append(f"real session bus: names with FolderSymbols after the run: {after or 'none'} "
-                             "(informational; your own window may come and go)")
+            from gi.repository import GLib
+            try:
+                after = sorted(n for n in self.real_bus.names() if "FolderSymbols" in n)
+            except GLib.Error as e:
+                self.info.append(f"real session bus: cannot list the names after the run: {e} (informational)")
+            else:
+                self.info.append(f"real session bus: names with FolderSymbols after the run: {after or 'none'} "
+                                 "(informational; your own window may come and go)")
 
 
 def select_scenarios(args, scenarios):
@@ -650,19 +693,19 @@ def expected_ok(res):
 def main(argv=None):
     p = argparse.ArgumentParser(prog="gui_check", description=__doc__.split("\n\n")[0])
     p.add_argument("-k", action="append", help="scenario ids or parts of ids, comma-separated")
-    p.add_argument("--display", choices=("xvfb", "session"), default=os.environ.get("GUI_CHECK_DISPLAY", "xvfb"))
+    p.add_argument("--display", choices=DISPLAY_MODES, default=os.environ.get("GUI_CHECK_DISPLAY", "xvfb"),
+                   help="where the windows open (default: $GUI_CHECK_DISPLAY, else xvfb); session warns and waits "
+                   "5 s before each window")
     p.add_argument("--symbols", choices=("auto", "yaru", "fixture"), default="auto")
     p.add_argument("--self-test", action="store_true", help="run the harness's own self-tests (Z)")
     p.add_argument("--list", action="store_true", help="list the scenarios and exit")
     p.add_argument("--out", help="directory for the run directory (default: the system temp directory)")
     p.add_argument("--keep", action="store_true", help="keep the run directory even when everything passed")
-    p.add_argument("--invisible", action="store_true",
-                   help="--display session on a display that is not your screen: no warning and no wait")
-    p.add_argument("--allow-shared-bus", action="store_true",
-                   help="run without a private bus when dbus-daemon is missing (weaker isolation)")
     p.add_argument("--scan-leftovers", action="store_true",
                    help="list processes of any earlier run that are still alive, and exit (1 if there are)")
     args = p.parse_args(argv)
+    if args.display not in DISPLAY_MODES:        # argparse does not check a default against choices
+        p.error(f"--display / GUI_CHECK_DISPLAY: {args.display!r} is not one of {', '.join(DISPLAY_MODES)}")
 
     if args.scan_leftovers:
         left = scan_processes()
@@ -695,7 +738,7 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, on_signal)
     started = time.monotonic()
     try:
-        run.setup()
+        run.setup(chosen)
     except SetupError as e:
         run.cleanup()
         say(f"gui_check: {e}")
@@ -713,7 +756,13 @@ def main(argv=None):
             results.append(res)
             print_result(res, args.self_test)
             continue
-        res = run.run_scenario(sc)
+        try:
+            res = run.run_scenario(sc)
+        except SetupError as e:                  # the scenario's private bus did not start
+            run.cleanup()
+            say(f"gui_check: {sc.id}: {e}")
+            say(f"gui_check: the harness cannot run; kept {run.dir}")
+            return EXIT_SETUP
         results.append(res)
         print_result(res, args.self_test)
         if res.verdict == INCOMPLETE and not sc.selftest:
@@ -721,7 +770,7 @@ def main(argv=None):
     run.finish_checks()
     for line in run.info:
         say(f"info: {line}")
-    say(f"info: windows opened: {run.windows_opened} ({'on your screen' if args.display == 'session' and run.visible else 'not visible'})")
+    say(f"info: windows opened: {run.windows_opened} ({'on your screen' if args.display == 'session' else 'not visible'})")
     counts = {v: sum(1 for r in results if r.verdict == v) for v in (PASS, FAIL, INCOMPLETE, NOT_VERIFIED, NOT_RUN)}
     for line in run.run_failures:
         say(f"RUN FAIL: {line}")

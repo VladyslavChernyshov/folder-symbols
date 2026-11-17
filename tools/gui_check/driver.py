@@ -244,18 +244,17 @@ class Driver(Recorder):
                 "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", method, args,
                 GLib.VariantType.new(reply), Gio.DBusCallFlags.NONE, -1, None).unpack()
             bus_id = call("GetId", None, "(s)")[0]
-            if env.get("GUI_CHECK_PRIVATE_BUS") == "1":
-                socket = address[len("unix:path="):].split(",")[0] if address.startswith("unix:path=") else ""
-                is_socket = bool(socket) and os.path.exists(socket) and stat.S_ISSOCK(os.stat(socket).st_mode)
-                line(is_socket and under(socket), f"bus socket: {socket or address} (a socket under the run directory)")
-                real_id = env.get("GUI_CHECK_REAL_BUS_ID", "")
-                line(bool(real_id) and bus_id != real_id,
-                     f"bus id: {bus_id}; the real session bus: {real_id or '(none found)'} (must differ)")
-                activatable = call("ListActivatableNames", None, "(as)")[0]
-                line(activatable == ["org.freedesktop.DBus"],
-                     f"activatable names: {activatable} (expected only org.freedesktop.DBus: nothing can be autostarted)")
+            socket = address[len("unix:path="):].split(",")[0] if address.startswith("unix:path=") else ""
+            is_socket = bool(socket) and os.path.exists(socket) and stat.S_ISSOCK(os.stat(socket).st_mode)
+            line(is_socket and under(socket), f"bus socket: {socket or address} (a socket under the run directory)")
+            real_id = env.get("GUI_CHECK_REAL_BUS_ID", "")
+            if real_id:
+                line(bus_id != real_id, f"bus id: {bus_id}; the real session bus: {real_id} (must differ)")
             else:
-                line(True, f"WEAKER ISOLATION: no private bus (random id on the real bus {bus_id})")
+                self.info(f"bus id: {bus_id}; not checked against the real session bus (none in the harness process)")
+            activatable = call("ListActivatableNames", None, "(as)")[0]
+            line(activatable == ["org.freedesktop.DBus"],
+                 f"activatable names: {activatable} (expected only org.freedesktop.DBus: nothing can be autostarted)")
             owner = call("GetNameOwner", GLib.Variant("(s)", (app_id,)), "(s)")[0]
             line(owner == connection.get_unique_name(),
                  f"bus name {app_id} is owned by this process ({owner})")
@@ -281,17 +280,15 @@ class Driver(Recorder):
         """The idle callback that runs the scenario inside app.run()."""
         self._watchdog = GLib.timeout_add_seconds(self.scenario.watchdog, self._on_watchdog)
         try:
+            if self.closed_by_user:              # closed before this idle callback ran (the app may be gone)
+                raise Incomplete()
             self.preflight()
             self.scenario.body(self)
             if self.closed_by_user:
                 raise Incomplete()
             verdict, reason = self.verdict_after_body()
         except Incomplete:
-            ran, not_run = self.steps_summary()
-            verdict = INCOMPLETE
-            reason = (f"WINDOW CLOSED BY THE USER at step {self.step_no} of {self.total_steps}; ran: "
-                      f"{', '.join(ran) or 'none'}; not run: {', '.join(not_run) or 'none'}; the checks of the "
-                      f"steps not run are unverified")
+            verdict, reason = INCOMPLETE, self.incomplete_reason()
         except Fail as e:
             verdict, reason = FAIL, str(e)
         except Exception:
@@ -305,6 +302,13 @@ class Driver(Recorder):
         self.emit("end", verdict=verdict, reason=reason, differences=self.differences,
                   steps_ran=self.step_no, steps=self.total_steps)
         return GLib.SOURCE_REMOVE
+
+    def incomplete_reason(self):
+        ran, not_run = self.steps_summary()
+        where = (f"before the scenario started (step 0 of {self.total_steps})" if self.step_no == 0
+                 else f"at step {self.step_no} of {self.total_steps}")
+        return (f"WINDOW CLOSED BY THE USER {where}; ran: {', '.join(ran) or 'none'}; not run: "
+                f"{', '.join(not_run) or 'none'}; the checks of the steps not run are unverified")
 
     def finish(self):
         """Close every window (the driver's own close, not the user's) and quit."""
@@ -320,9 +324,14 @@ def run(scenario, emit, ctx, paths, control_fd):
     backend = Backend()
     app = FolderSymbolsApplication(**backend.kwargs())
     driver = Driver(scenario, emit, ctx, app, backend, control_fd)
+    if scenario.on_start is not None:
+        scenario.on_start(driver)
     GLib.idle_add(driver.start)
     status = app.run([os.path.join(driver.root, "folder-symbols-gui"), *paths])
-    if driver.result is None:
+    if driver.result is None and driver.closed_by_user:      # the idle callback never ran
+        emit("end", verdict=INCOMPLETE, reason=driver.incomplete_reason(),
+             differences=driver.differences, steps_ran=driver.step_no, steps=driver.total_steps)
+    elif driver.result is None:
         emit("end", verdict=FAIL, reason=f"app.run() returned {status} before the scenario ended",
              differences=driver.differences, steps_ran=driver.step_no, steps=driver.total_steps)
     return status

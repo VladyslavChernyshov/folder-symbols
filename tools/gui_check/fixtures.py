@@ -67,6 +67,25 @@ def count_symbols(symbols_dir):
     return len(names)
 
 
+def count_matching(symbols_dir, query, category):
+    """The number of symbols the gallery shows for this search text and category, counted here and not with
+    the package's own code, by the gallery's rule: the directory is walked in sorted order and the first
+    existing *-symbolic.svg of a name wins (its first-level subdirectory is the category, "other" for files
+    directly in symbols_dir); a symbol matches when the stripped, casefolded query is a substring of its
+    casefolded name (the name only) and its category equals category (None: any)."""
+    winners = {}
+    for dirpath, _dirs, files in sorted(os.walk(symbols_dir)):
+        for f in sorted(files):
+            name = f[:-len("-symbolic.svg")]
+            if not f.endswith("-symbolic.svg") or name in winners or not os.path.exists(os.path.join(dirpath, f)):
+                continue
+            rel = os.path.relpath(dirpath, symbols_dir)
+            winners[name] = "other" if rel == os.curdir else rel.split(os.sep)[0]
+    needle = query.strip().casefold()
+    return sum(1 for name, cat in winners.items()
+               if needle in name.casefold() and (category is None or cat == category))
+
+
 def has_symbols(symbols_dir):
     return os.path.isdir(symbols_dir) and count_symbols(symbols_dir) > 0
 
