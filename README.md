@@ -229,6 +229,8 @@ python3 tools/make_screenshot.py                                    # redraw doc
 Extra packages for the GUI (not required for the CLI or tests):
 - Ubuntu: `sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1`
 
+To check the window after changing it, run `make gui-check` (local only, see `tools/gui_check/README.md`).
+
 The tests never touch your real home directory and never call `gio`: they run with a temporary
 `HOME` and `XDG_DATA_HOME` and stand-ins for `gio` and `gsettings`.
 
