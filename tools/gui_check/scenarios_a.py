@@ -4,6 +4,7 @@ The expected texts are literals copied from the code (appinfo.py, selection.py, 
 text in the application shows up here as a difference. No GTK import at module level: the parent reads
 only the metadata; the bodies get GTK through the driver (d.Gtk, d.GLib)."""
 import os
+import xml.etree.ElementTree as ET
 
 import fixtures
 from registry import Fail, scenario
@@ -24,6 +25,10 @@ NO_CALLS = {"apply": 0, "reset": 0, "plan_cleanup": 0, "run_cleanup": 0}
 PLAIN_PREVIEW = "Yaru-plain.svg"
 SEARCH = "view"
 CATEGORY = "actions"
+# A5 on the real symbols: the first of these queries that has a category narrowing it (fixtures.narrowing_pair);
+# Yaru on Ubuntu 26.04 gives "view" / "actions" (49 -> 37).
+A5_QUERIES = ("view", "edit", "media", "document", "go")
+NO_NARROWING = "no category narrows the query in this symbol set"
 
 
 def no_folder_error(items):
@@ -40,6 +45,20 @@ def expected_symbols(d):
     if d.ctx.symbols_source == "fixture":
         return len(fixtures.fixture_names())
     return fixtures.count_symbols(d.ctx.symbols_dir)
+
+
+def svg_problem(path):
+    """None when path is an XML document whose root tag ends with "svg" and has at least one child element;
+    otherwise what is wrong with it."""
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError) as e:
+        return f"not an XML document: {e}"
+    if not root.tag.endswith("svg"):
+        return f"root tag {root.tag!r} is not svg"
+    if len(root) == 0:
+        return "an empty svg document (no child elements)"
+    return None
 
 
 def fixture_matches(query, category=None):
@@ -127,6 +146,7 @@ def a2(d):
     run_dir = os.path.realpath(os.environ["GUI_CHECK_RUN_DIR"]) + os.sep
     d.check("preview file exists under the run directory",
             bool(path) and os.path.isfile(path) and os.path.realpath(path).startswith(run_dir), True)
+    d.check("preview file is a non-empty SVG document", svg_problem(path) if path else "no file", None)
     d.step("no backend calls")
     d.check("backend calls", d.backend.calls(), NO_CALLS)
 
@@ -231,11 +251,26 @@ def set_search(d, text):
     return header
 
 
+def a5_pair(symbols_dir, source):
+    """(query, category) of A5: the fixed pair on the fixture (its exact counts are known), else the first
+    candidate query with a narrowing category in this symbol set; None when there is none."""
+    if source == "fixture":
+        return SEARCH, CATEGORY
+    pair = fixtures.narrowing_pair(symbols_dir, A5_QUERIES)
+    return pair[:2] if pair else None
+
+
 @scenario("A5", "a second launch with another folder updates the same window", prepare=prepare_a5,
           steps=("window shown", "first selection", "search set", "category set", "manifest edited",
-                 "second launch", "same window updated"))
+                 "second launch", "same window updated"),
+          not_verified_if=lambda symbols_dir, source: None if a5_pair(symbols_dir, source) else NO_NARROWING)
 def a5(d):
     ctx = d.ctx
+    pair = a5_pair(ctx.symbols_dir, ctx.symbols_source)
+    d.require(pair is not None, NO_NARROWING)     # the parent made it NOT VERIFIED before starting
+    query, category = pair
+    d.info(f"search {query!r} ({fixtures.count_matching(ctx.symbols_dir, query, None)} symbols), category "
+           f"{category!r} ({fixtures.count_matching(ctx.symbols_dir, query, category)})")
     d.step("window shown")
     d.wait_window()
     d.step("first selection")
@@ -243,27 +278,27 @@ def a5(d):
     d.check("gallery selection", d.selected_name(), ctx.s1)
     d.check("preview accent", accent(d), "red")
     d.step("search set")
-    header = set_search(d, SEARCH)
+    header = set_search(d, query)
     if ctx.symbols_source == "fixture":
-        d.check("symbols matching the search", d.grid_model().get_n_items(), fixture_matches(SEARCH))
+        d.check("symbols matching the search", d.grid_model().get_n_items(), fixture_matches(query))
     d.step("category set")
     after_search = d.grid_model().get_n_items()
-    header.activate_action("gallery.category", d.GLib.Variant.new_string(CATEGORY))
+    header.activate_action("gallery.category", d.GLib.Variant.new_string(category))
     try:
-        d.wait_until(lambda: header.get_property("category") == CATEGORY
+        d.wait_until(lambda: header.get_property("category") == category
                      and d.grid_model().get_n_items() < after_search,
-                     f"the category {CATEGORY!r} to narrow the grid", timeout=5)
+                     f"the category {category!r} to narrow the grid", timeout=5)
     except Fail:
         if d.watchdog_fired:
             raise
         # the checks below record what did not happen
     after_category = d.grid_model().get_n_items()
-    d.check("category", header.get_property("category"), CATEGORY)
+    d.check("category", header.get_property("category"), category)
     d.check(f"category narrows the grid ({after_category} < {after_search})", after_category < after_search, True)
     if ctx.symbols_source == "fixture":
-        expected = fixture_matches(SEARCH, CATEGORY)
+        expected = fixture_matches(query, category)
     else:
-        expected = fixtures.count_matching(ctx.symbols_dir, SEARCH, CATEGORY)
+        expected = fixtures.count_matching(ctx.symbols_dir, query, category)
     d.check("symbols matching search and category", after_category, expected)
     d.step("manifest edited")
     ctx.record(ctx.videos, ctx.s3, "purple")         # after the start: a cached state would show s2/blue

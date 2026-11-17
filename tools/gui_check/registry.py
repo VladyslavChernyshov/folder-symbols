@@ -24,8 +24,13 @@ class Scenario:
     needs_real_bus: bool = False      # NOT VERIFIED when the harness process has no session bus to compare with
     force_symbols: Optional[str] = None   # "fixture": always evaluated as if Yaru were absent
     allowed_stderr: tuple = ()        # exact full stderr lines this scenario may print (with reasons)
-    expect: Optional[tuple] = None    # self-tests: (verdict, text the reason must contain[, text it must not])
+    # self-tests: (verdict, text or tuple of texts the reason and details must contain[, text they must not])
+    expect: Optional[tuple] = None
+    expect_no_real_bus: Optional[tuple] = None   # self-tests: expect when the harness has no real session bus
     on_start: Optional[Callable] = None   # self-tests: on_start(driver) before app.run(), ahead of the body
+    # not_verified_if(symbols_dir, source) -> reason or None: evaluated by the parent before the scenario
+    # starts; a reason makes it NOT VERIFIED without opening a window
+    not_verified_if: Optional[Callable] = None
 
     @property
     def opens_window(self):

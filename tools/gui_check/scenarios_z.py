@@ -2,8 +2,10 @@
 that the harness can report NOT VERIFIED, a watchdog timeout, a window closed by someone else, a blocked
 main loop killed by the parent, that wait_until counts real main-loop iterations, a wait's own timeout,
 that the real application id on the private bus leaves the real session bus alone, a crash or a non-zero
-exit after the end event, an application diagnostic on stderr, a window closed before the scenario started,
-and a malformed event line. Z5 needs a person and runs only when asked for by its exact id."""
+exit after the end event, application diagnostics on stderr, a window closed before the scenario started
+(through each of the driver's two checks, Z12 and Z15), a malformed event line, an end event of the wrong
+type, and a process that exits without a result. Z5 needs a person and runs only when asked for by its exact
+id. Z8 expects NOT VERIFIED instead of PASS when the harness has no real session bus."""
 import os
 import signal
 import sys
@@ -101,7 +103,8 @@ def z7(d):
 
 @scenario("Z8", "the real application id on the private bus leaves the real session bus alone", selftest=True,
           app_id="real", needs_real_bus=True,
-          steps=("window shown", "real id on the private bus", "parent's real-bus check"), expect=(PASS, ""))
+          steps=("window shown", "real id on the private bus", "parent's real-bus check"), expect=(PASS, ""),
+          expect_no_real_bus=(NOT_VERIFIED, "not compared with the real session bus"))
 def z8(d):
     d.step("window shown")
     d.wait_window()
@@ -134,12 +137,14 @@ def z10(d):
     d.app.connect("shutdown", lambda _app: os._exit(3))
 
 
-@scenario("Z11", "an application diagnostic (folder-symbols: ...) on stderr: FAIL", selftest=True,
-          needs_display=False, steps=("print a diagnostic",),
-          expect=(FAIL, "unexpected stderr line: folder-symbols: injected by the self-test"))
+@scenario("Z11", "application diagnostics (folder-symbols: ..., folder-symbols-gui: ...) on stderr: FAIL",
+          selftest=True, needs_display=False, steps=("print two diagnostics",),
+          expect=(FAIL, ("unexpected stderr line: folder-symbols: injected by the self-test",
+                         "unexpected stderr line: folder-symbols-gui: injected by the self-test")))
 def z11(d):
-    d.step("print a diagnostic")
+    d.step("print two diagnostics")
     print("folder-symbols: injected by the self-test", file=sys.stderr, flush=True)
+    print("folder-symbols-gui: injected by the self-test", file=sys.stderr, flush=True)
 
 
 def close_before_start(d):
@@ -149,10 +154,31 @@ def close_before_start(d):
     d.app.connect("window-added", added)
 
 
-@scenario("Z12", "the window is closed before the scenario starts: INCOMPLETE", selftest=True,
-          on_start=close_before_start, steps=("window shown",),
-          expect=(INCOMPLETE, "WINDOW CLOSED BY THE USER before the scenario started (step 0 of 1)"))
+# The app keeps running after this close, so Driver.start runs and finds the close itself: path "start"
+# (20 of 20 runs on Ubuntu 26.04).
+@scenario("Z12", "the window is closed before the scenario starts: INCOMPLETE (Driver.start's check)",
+          selftest=True, on_start=close_before_start, steps=("window shown",),
+          expect=(INCOMPLETE, ("WINDOW CLOSED BY THE USER before the scenario started (step 0 of 1)",
+                               "end event path: start")))
 def z12(d):
+    d.step("window shown")
+    d.wait_window()
+
+
+def close_and_quit_before_start(d):
+    """Close the window and quit the application in one callback that runs before the driver's idle callback
+    (PRIORITY_HIGH_IDLE ahead of DEFAULT_IDLE): app.run() returns after that main-context iteration, so
+    Driver.start never runs."""
+    def added(_app, window):
+        d.GLib.idle_add(lambda: window.close() or d.app.quit() or False, priority=d.GLib.PRIORITY_HIGH_IDLE)
+    d.app.connect("window-added", added)
+
+
+@scenario("Z15", "the window is closed and the app quits before the scenario starts: INCOMPLETE (run()'s check)",
+          selftest=True, on_start=close_and_quit_before_start, steps=("window shown",),
+          expect=(INCOMPLETE, ("WINDOW CLOSED BY THE USER before the scenario started (step 0 of 1)",
+                               "end event path: run")))
+def z15(d):
     d.step("window shown")
     d.wait_window()
 
@@ -162,3 +188,22 @@ def z12(d):
 def z13(d):
     d.step("write a malformed line")
     os.write(int(os.environ["GUI_CHECK_RESULT_FD"]), b"not json {\n")
+
+
+@scenario("Z14", "an end event with a null verdict (valid JSON, wrong type): FAIL", selftest=True,
+          needs_display=False, steps=("write an end event with a null verdict",),
+          expect=(FAIL, """malformed event line from the child: '{"t": "end", "verdict": null}'"""))
+def z14(d):
+    d.step("write an end event with a null verdict")
+    os.write(int(os.environ["GUI_CHECK_RESULT_FD"]), b'{"t": "end", "verdict": null}\n')
+
+
+@scenario("Z16", "the process exits with status 3, no end event and an empty stderr: FAIL", selftest=True,
+          steps=("window shown", "exit"),
+          expect=(FAIL, ("the scenario process ended (status 3) without a result; last step 2 of 2 (exit)",
+                         "stderr: empty")))
+def z16(d):
+    d.step("window shown")
+    d.wait_window()
+    d.step("exit")
+    os._exit(3)               # no end event, nothing on stderr: once taken for a user close in session mode

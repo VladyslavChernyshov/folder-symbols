@@ -251,7 +251,8 @@ class Driver(Recorder):
             if real_id:
                 line(bus_id != real_id, f"bus id: {bus_id}; the real session bus: {real_id} (must differ)")
             else:
-                self.info(f"bus id: {bus_id}; not checked against the real session bus (none in the harness process)")
+                self.info(f"bus id: {bus_id}; not compared with the real session bus (the harness has none to "
+                          "compare with)")
             activatable = call("ListActivatableNames", None, "(as)")[0]
             line(activatable == ["org.freedesktop.DBus"],
                  f"activatable names: {activatable} (expected only org.freedesktop.DBus: nothing can be autostarted)")
@@ -300,7 +301,7 @@ class Driver(Recorder):
             self.finish()
         self.result = (verdict, reason)
         self.emit("end", verdict=verdict, reason=reason, differences=self.differences,
-                  steps_ran=self.step_no, steps=self.total_steps)
+                  steps_ran=self.step_no, steps=self.total_steps, path="start")
         return GLib.SOURCE_REMOVE
 
     def incomplete_reason(self):
@@ -328,10 +329,12 @@ def run(scenario, emit, ctx, paths, control_fd):
         scenario.on_start(driver)
     GLib.idle_add(driver.start)
     status = app.run([os.path.join(driver.root, "folder-symbols-gui"), *paths])
+    # path: "start" for the end event of Driver.start (including its own check of a close before the
+    # scenario started), "run" for these two, when app.run() returned before Driver.start ran
     if driver.result is None and driver.closed_by_user:      # the idle callback never ran
         emit("end", verdict=INCOMPLETE, reason=driver.incomplete_reason(),
-             differences=driver.differences, steps_ran=driver.step_no, steps=driver.total_steps)
+             differences=driver.differences, steps_ran=driver.step_no, steps=driver.total_steps, path="run")
     elif driver.result is None:
         emit("end", verdict=FAIL, reason=f"app.run() returned {status} before the scenario ended",
-             differences=driver.differences, steps_ran=driver.step_no, steps=driver.total_steps)
+             differences=driver.differences, steps_ran=driver.step_no, steps=driver.total_steps, path="run")
     return status

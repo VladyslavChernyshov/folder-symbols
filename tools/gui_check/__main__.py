@@ -16,14 +16,15 @@ Each scenario runs in its own process (child.py) with an environment built from 
 Every process the harness starts dies with its parent (pdeath_exec.py). After each scenario and at the end,
 /proc is scanned for processes left behind.
 
-Exit status: 0 every scenario PASS; 1 any FAIL or INCOMPLETE (or a failed run-level check); 2 the harness
-cannot run (setup); 3 only NOT VERIFIED results and no failure. With --self-test: 0 when every self-test
-gave its expected verdict, else 1."""
+Exit status: 0 every scenario PASS; 1 any FAIL, INCOMPLETE or NOT RUN (or a failed run-level check); 2 the
+harness cannot run (setup); 3 at least one NOT VERIFIED and no FAIL, INCOMPLETE or NOT RUN. With --self-test:
+0 when every self-test gave its expected verdict, else 1."""
 import argparse
 import atexit
 import json
 import os
 import random
+import re
 import select
 import shlex
 import shutil
@@ -52,8 +53,57 @@ SOCKET_MAX = 107                     # sun_path holds 108 bytes with the final N
 STARTUP_TIMEOUT = 10                 # seconds for Xvfb and dbus-daemon to report their address
 GSETTINGS_ALLOWED = "gsettings get org.gnome.desktop.interface icon-theme"
 STDERR_BAD = ("Traceback", "-CRITICAL", "-WARNING", "-ERROR")
-STDERR_BAD_PREFIX = "folder-symbols:"   # the application's own diagnostics (for example gui/preview.py)
+# The application's own diagnostics: "folder-symbols: ..." (for example gui/preview.py) and
+# "folder-symbols-gui: ..." (the launcher's selection_error).
+STDERR_BAD_PREFIXES = ("folder-symbols:", "folder-symbols-gui:")
 TOOLS_PATH = "/usr/bin:/bin"         # PATH of the processes the harness starts, and where it looks for them
+SAFE_PATH = re.compile(r"[A-Za-z0-9_./-]+")   # the run directory goes unescaped into a D-Bus address and bus.conf
+NO_ADDRESS = "no D-Bus session bus address in the environment"
+STDERR_TAIL = 5                      # stderr lines shown for a process that ended without a result
+USER_CLOSED = "WINDOW CLOSED BY THE USER"
+END_PATHS = ("start", "run")         # driver.py: Driver.start's own check, or run() after app.run() returned
+
+
+def _is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _is_str(v):
+    return isinstance(v, str)
+
+
+def _is_bool(v):
+    return isinstance(v, bool)
+
+
+def _str_or_none(v):
+    return v is None or isinstance(v, str)
+
+
+# Every event the child sends (registry.Recorder, child.py, driver.py): its required keys and their checks,
+# and its optional keys. A line that does not match is a malformed event line.
+EVENT_KEYS = {
+    "step": ({"n": _is_int, "of": _is_int, "name": _is_str}, {}),
+    "check": ({"step": _is_int, "label": _is_str, "ok": _is_bool, "expected": _is_str, "actual": _is_str}, {}),
+    "info": ({"text": _is_str}, {}),
+    "log": ({"text": _is_str}, {}),
+    "preflight": ({"ok": _is_bool, "text": _is_str}, {}),
+    "ready": ({"app_id": _is_str, "bus_id": _str_or_none}, {}),
+    "end": ({"verdict": lambda v: v in (PASS, FAIL, INCOMPLETE, NOT_VERIFIED), "reason": _str_or_none,
+             "differences": lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v),
+             "steps_ran": _is_int, "steps": _is_int},
+            {"path": lambda v: v in END_PATHS}),
+}
+
+
+def valid_event(event):
+    """True when event is a dict whose type is in EVENT_KEYS, with every required key of the right type and
+    no optional key of the wrong type (other keys are ignored)."""
+    if not isinstance(event, dict) or not isinstance(event.get("t"), str) or event["t"] not in EVENT_KEYS:
+        return False
+    required, optional = EVENT_KEYS[event["t"]]
+    return (all(k in event and check(event[k]) for k, check in required.items())
+            and all(check(event[k]) for k, check in optional.items() if k in event))
 DISPLAY_MODES = ("xvfb", "session")
 EXIT_OK, EXIT_FAIL, EXIT_SETUP, EXIT_NOT_VERIFIED = 0, 1, 2, 3
 BUS_CONF = """<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
@@ -128,7 +178,8 @@ def scan_processes(marker_value=None, exclude=()):
 
 
 class RealBus:
-    """Read-only queries on your real session bus (Gio, no GTK); None values when there is none."""
+    """Read-only queries on your real session bus (Gio, no GTK); None values when it cannot be reached.
+    why_none says why there is no connection."""
 
     def __init__(self):
         self.connection = None
@@ -140,6 +191,12 @@ class RealBus:
             self.connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         except Exception as e:                     # no bus, or no PyGObject
             self.error = str(e)
+
+    @property
+    def why_none(self):
+        if not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+            return NO_ADDRESS
+        return f"the real session bus is not reachable: {getattr(self, 'error', 'unknown error')}"
 
     def _call(self, method, args=None, reply="(s)"):
         from gi.repository import GLib
@@ -174,6 +231,14 @@ class Result:
         self.bad_events = []             # raw text of event lines that are not valid events
         self.seconds = 0.0
         self.allowed_seen = []           # allowlisted stderr lines that appeared
+        self.user_closed = False         # the events show a window closed by the user
+
+
+def stops_further_windows(res):
+    """True when no further window may open after this result: a real scenario (not a self-test) that ended
+    INCOMPLETE, or whose events show a window closed by the user, whatever its final verdict (the process
+    may have crashed or hung in shutdown after the close)."""
+    return not res.scenario.selftest and (res.verdict == INCOMPLETE or res.user_closed)
 
 
 class Run:
@@ -205,10 +270,15 @@ class Run:
         """Stop p's whole process group once: SIGTERM, then (after p exited or grace seconds) SIGKILL to
         sweep members that outlived the leader, then reap p. Both signals are sent while p is not yet
         reaped (an exited p stays a zombie, which keeps its pid, so the group id cannot have been reused).
-        A process that was stopped before, or reaped elsewhere (poll, wait), is not signalled."""
+        A process that was stopped before, or reaped anywhere (poll, wait, os.waitpid), is not signalled:
+        once it is reaped, stop returns without any further signal."""
         pgid, p.pgid = getattr(p, "pgid", None), None
         if pgid is None or p.returncode is not None:
             return
+        try:
+            os.waitid(os.P_PID, p.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        except ChildProcessError:
+            return                        # reaped elsewhere: its group id may belong to someone else now
         try:
             os.killpg(pgid, signal.SIGTERM)
         except ProcessLookupError:
@@ -219,7 +289,7 @@ class Run:
                 if os.waitid(os.P_PID, p.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
                     break                 # exited, not reaped
             except ChildProcessError:
-                break
+                return                    # reaped meanwhile: no SIGKILL after reaping
             time.sleep(0.02)
         try:
             os.killpg(pgid, signal.SIGKILL)
@@ -272,15 +342,18 @@ class Run:
     def setup(self, chosen):
         args = self.args
         base = os.path.abspath(args.out or tempfile.gettempdir())     # Python < 3.12: mkdtemp keeps it relative
+        self.check_safe_path(base)                                     # before anything is created or started
         os.makedirs(base, exist_ok=True)
         self.dir = os.path.abspath(tempfile.mkdtemp(prefix="gui-check-", dir=base))
+        self.check_safe_path(self.dir)
         for sub in ("bin", "tmp", "cache", "home-tools"):
             os.makedirs(os.path.join(self.dir, sub))
         for sc in chosen:
             socket = self.socket_path(self.scenario_dir(sc))
             if len(socket.encode()) > SOCKET_MAX:
                 raise SetupError(f"the D-Bus socket path of {sc.id}, {socket}, is longer than {SOCKET_MAX} bytes; "
-                                 "use --out with a shorter directory")
+                                 f"use --out with a shorter directory; left the run directory {self.dir} "
+                                 "(nothing was started in it)")
         self.gio_log = os.path.join(self.dir, "gio.log")
         self.gsettings_log = os.path.join(self.dir, "gsettings.log")
         for name, text in (("gio", GIO_STUB.format(log=shlex.quote(self.gio_log))),
@@ -323,9 +396,7 @@ class Run:
             self.info.append(f"real session bus: id {self.real_bus_id}; names with FolderSymbols before the run: "
                              f"{self.real_names_before or 'none'} (informational)")
         else:
-            error = getattr(self.real_bus, "error", None)
-            self.info.append("real session bus: none in the harness process"
-                             + (f" ({error})" if error else " (DBUS_SESSION_BUS_ADDRESS is not set)")
+            self.info.append(f"real session bus: not used ({self.real_bus.why_none})"
                              + "; not checked: that the private bus id differs from the real one, that no GuiCheck "
                              "name appears on the real bus while a scenario runs, and the owner of the real id; "
                              "Z8 is NOT VERIFIED. The private-bus checks (socket, activatable names, name owner) "
@@ -336,8 +407,7 @@ class Run:
         if args.display == "xvfb":
             self.tools["Xvfb"] = shutil.which("Xvfb", path=TOOLS_PATH)
             if self.tools["Xvfb"] is None:
-                raise SetupError(f"Xvfb not found in {TOOLS_PATH}: install it (Ubuntu: xvfb, openSUSE: "
-                                 "xorg-x11-server-Xvfb), or use --display session")
+                raise SetupError(f"Xvfb not found in {TOOLS_PATH}: install Xvfb, or use --display session")
             self.start_xvfb()
         else:
             what = os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")
@@ -349,6 +419,12 @@ class Run:
             if self.tools["notify-send"] is None:
                 self.info.append(f"notify-send not found in {TOOLS_PATH}: the warning before each window is "
                                  "printed only")
+
+    @staticmethod
+    def check_safe_path(path):
+        if not SAFE_PATH.fullmatch(path):
+            raise SetupError(f"the run directory {path!r} has characters other than A-Z a-z 0-9 _ . / -, which "
+                             "would break the D-Bus address and bus.conf; use --out with a plain path")
 
     def start_xvfb(self):
         log = os.path.join(self.dir, "xvfb.log")
@@ -388,7 +464,7 @@ class Run:
         os.makedirs(os.path.join(sdir, "tmp"))
         source = "fixture" if sc.force_symbols == "fixture" else self.source
         env = {
-            "PATH": f"{os.path.join(self.dir, 'bin')}:/usr/bin:/bin",
+            "PATH": f"{os.path.join(self.dir, 'bin')}:{TOOLS_PATH}",
             "HOME": home,
             "XDG_DATA_HOME": os.path.join(home, ".local", "share"),
             "XDG_CONFIG_HOME": config,
@@ -465,8 +541,13 @@ class Run:
             res.verdict, res.reason = NOT_VERIFIED, "no real Yaru symbols (only the generated fixture)"
             return res
         if sc.needs_real_bus and self.real_bus.connection is None:
-            res.verdict, res.reason = NOT_VERIFIED, "no real session bus to compare with"
+            res.verdict, res.reason = NOT_VERIFIED, f"not compared with the real session bus: {self.real_bus.why_none}"
             return res
+        if sc.not_verified_if is not None:
+            why = sc.not_verified_if(self.yaru_dir if source == "yaru" else self.fixture_dir, source)
+            if why:
+                res.verdict, res.reason = NOT_VERIFIED, why
+                return res
         sdir = self.scenario_dir(sc)
         os.makedirs(sdir)
         bus = None
@@ -534,7 +615,7 @@ class Run:
                         event = json.loads(raw)
                     except ValueError:           # not JSON, or not UTF-8
                         event = None
-                    if not isinstance(event, dict) or not isinstance(event.get("t"), str):
+                    if not valid_event(event):   # an unknown type, a missing key or a wrong value type
                         res.bad_events.append(text)
                         continue
                     res.events.append(event)
@@ -571,35 +652,44 @@ class Run:
             if line in sc.allowed_stderr:
                 res.allowed_seen.append(line)
             elif (any(b in line for b in STDERR_BAD) or "warning" in line.lower()
-                  or line.startswith(STDERR_BAD_PREFIX)):
+                  or line.startswith(STDERR_BAD_PREFIXES)):
                 bad.append(line)
         for e in res.events:
             if e["t"] == "log":
                 res.details.append(e["text"])
+        # A user close always reaches the driver's close-request handler, which logs it and ends the scenario
+        # with an end event INCOMPLETE (driver.py); a process that ends without an end event is never one.
+        res.user_closed = any(e["t"] == "log" and e["text"].startswith(USER_CLOSED) for e in res.events) or (
+            end is not None and end["verdict"] == INCOMPLETE)
+        end_lines = []
+        if end is not None:
+            end_lines.append(f"the end event said {end['verdict']}" + (f": {end['reason']}" if end["reason"] else ""))
+            end_lines.extend(end["differences"][:3])
+            if len(end["differences"]) > 3:
+                end_lines.append(f"... and {len(end['differences']) - 3} more differences (see events.jsonl)")
+            if "path" in end:
+                end_lines.append(f"end event path: {end['path']}")
         if killed is not None:
             res.verdict = FAIL
-            res.reason = f"killed by the parent after {killed} s: no result by then; {last}"
+            res.reason = (f"killed by the parent after {killed} s: the process did not exit after its end event; {last}"
+                          if end is not None else f"killed by the parent after {killed} s: no result by then; {last}")
+            res.details.extend(end_lines)
+        elif end is not None and child.returncode:     # the process must also end cleanly after its result
+            res.verdict = FAIL
+            res.reason = (f"killed by {signal_name(-child.returncode)} after the end event" if child.returncode < 0
+                          else f"exited with code {child.returncode} after the end event")
+            res.details.extend(end_lines)
         elif end is not None:
-            res.verdict, res.reason = end["verdict"], end.get("reason")
-            res.details.extend(end.get("differences", [])[:3])
-            if len(end.get("differences", [])) > 3:
-                res.details.append(f"... and {len(end['differences']) - 3} more differences (see events.jsonl)")
-            if child.returncode:                  # the process must also end cleanly after its result
-                line = (f"killed by {signal_name(-child.returncode)} after the end event" if child.returncode < 0
-                        else f"exited with code {child.returncode} after the end event")
-                if res.verdict == INCOMPLETE:
-                    res.details.append(f"the end event said {INCOMPLETE}: {res.reason}")
-                    res.verdict = None
-                self.fail(res, line)
+            res.verdict, res.reason = end["verdict"], end["reason"]
+            res.details.extend(end_lines[1:])          # the verdict and reason are already the result's own
         elif child.returncode is not None and child.returncode < 0:
             res.verdict = FAIL
             res.reason = f"killed by {signal_name(-child.returncode)}; {last}"
-        elif self.args.display == "session" and sc.opens_window and not stderr:
-            res.verdict = INCOMPLETE
-            res.reason = f"the process ended early with an empty stderr: most likely closed by the user; {last}"
         else:
             res.verdict = FAIL
             res.reason = f"the scenario process ended (status {child.returncode}) without a result; {last}"
+            tail = [line for line in stderr if line.strip()][-STDERR_TAIL:]
+            res.details.append("stderr (last lines): " + " | ".join(tail) if tail else "stderr: empty")
         for text in res.bad_events:
             self.fail(res, f"malformed event line from the child: {text!r}")
         for line in bad:
@@ -608,7 +698,7 @@ class Run:
         if reply and reply.get("error"):
             self.fail(res, f"real-bus check failed: {reply['error']}")
         elif reply and reply["skipped"]:
-            res.details.append("info: real-bus names not checked (no session bus in the harness process)")
+            res.details.append(f"info: real-bus names not checked ({self.real_bus.why_none})")
         elif reply and reply["guicheck"]:
             self.fail(res, f"names with GuiCheck on the real bus while the scenario ran: {reply['guicheck']}")
         if not self.preflight_shown and any(e["t"] == "preflight" for e in res.events):
@@ -660,12 +750,20 @@ def select_scenarios(args, scenarios):
     return chosen
 
 
-def print_result(res, selftest):
+def expectation(sc, has_real_bus):
+    """The self-test's expectation in this environment (Z8 cannot PASS without a real session bus)."""
+    if not has_real_bus and sc.expect_no_real_bus is not None:
+        return sc.expect_no_real_bus
+    return sc.expect
+
+
+def print_result(res, selftest, has_real_bus):
     sc = res.scenario
     expected = ""
-    if selftest and sc.expect:
-        res.as_expected = expected_ok(res)
-        expected = f"  [expected {sc.expect[0]}: {'as expected' if res.as_expected else 'NOT AS EXPECTED'}]"
+    expect = expectation(sc, has_real_bus)
+    if selftest and expect:
+        res.as_expected = expected_ok(res, expect)
+        expected = f"  [expected {expect[0]}: {'as expected' if res.as_expected else 'NOT AS EXPECTED'}]"
     say(f"{sc.id:<4} {res.verdict:<14} {res.seconds:5.1f} s  {sc.title}{expected}")
     if res.verdict in (NOT_VERIFIED, NOT_RUN):
         say(f"       reason: {res.reason}")
@@ -684,10 +782,13 @@ def print_result(res, selftest):
         say(f"       allowed stderr line: {line}")
 
 
-def expected_ok(res):
-    verdict, contains, *rest = res.scenario.expect
+def expected_ok(res, expect):
+    """expect: (verdict, text or tuple of texts that must all appear[, text that must not appear])."""
+    verdict, contains, *rest = expect
     text = (res.reason or "") + "\n" + "\n".join(res.details)
-    return (res.verdict == verdict and contains in text and not (rest and rest[0] and rest[0] in text))
+    wanted = contains if isinstance(contains, tuple) else (contains,)
+    return (res.verdict == verdict and all(w in text for w in wanted)
+            and not (rest and rest[0] and rest[0] in text))
 
 
 def main(argv=None):
@@ -749,12 +850,13 @@ def main(argv=None):
     run.info = []
 
     results, stopped = [], None
+    has_real_bus = run.real_bus.connection is not None
     for sc in chosen:
         if stopped:
             res = Result(sc)
-            res.verdict, res.reason = NOT_RUN, f"not run: {stopped} INCOMPLETE; ask before running windows again"
+            res.verdict, res.reason = NOT_RUN, f"not run: {stopped}; ask before running windows again"
             results.append(res)
-            print_result(res, args.self_test)
+            print_result(res, args.self_test, has_real_bus)
             continue
         try:
             res = run.run_scenario(sc)
@@ -764,9 +866,10 @@ def main(argv=None):
             say(f"gui_check: the harness cannot run; kept {run.dir}")
             return EXIT_SETUP
         results.append(res)
-        print_result(res, args.self_test)
-        if res.verdict == INCOMPLETE and not sc.selftest:
-            stopped = sc.id
+        print_result(res, args.self_test, has_real_bus)
+        if stops_further_windows(res):
+            stopped = (f"the window of {sc.id} was closed by the user ({res.verdict})" if res.user_closed
+                       else f"{sc.id} {res.verdict}")
     run.finish_checks()
     for line in run.info:
         say(f"info: {line}")

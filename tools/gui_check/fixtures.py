@@ -73,6 +73,13 @@ def count_matching(symbols_dir, query, category):
     existing *-symbolic.svg of a name wins (its first-level subdirectory is the category, "other" for files
     directly in symbols_dir); a symbol matches when the stripped, casefolded query is a substring of its
     casefolded name (the name only) and its category equals category (None: any)."""
+    needle = query.strip().casefold()
+    return sum(1 for name, cat in _winners(symbols_dir).items()
+               if needle in name.casefold() and (category is None or cat == category))
+
+
+def _winners(symbols_dir):
+    """{name: category} by the gallery's rule (see count_matching)."""
     winners = {}
     for dirpath, _dirs, files in sorted(os.walk(symbols_dir)):
         for f in sorted(files):
@@ -81,9 +88,33 @@ def count_matching(symbols_dir, query, category):
                 continue
             rel = os.path.relpath(dirpath, symbols_dir)
             winners[name] = "other" if rel == os.curdir else rel.split(os.sep)[0]
-    needle = query.strip().casefold()
-    return sum(1 for name, cat in winners.items()
-               if needle in name.casefold() and (category is None or cat == category))
+    return winners
+
+
+def category_counts(symbols_dir, query):
+    """{category: number of symbols matching query in it}, by the same rule as count_matching."""
+    needle, counts = query.strip().casefold(), {}
+    for name, cat in _winners(symbols_dir).items():
+        if needle in name.casefold():
+            counts[cat] = counts.get(cat, 0) + 1
+    return counts
+
+
+def narrowing_pair(symbols_dir, candidates):
+    """(query, category, matches of the query, matches in the category) for the first candidate query that
+    narrows the whole set (0 < matches < all symbols) and has a category that narrows it further
+    (0 < matches in it < matches of the query): the category with the most matches, ties by name. None when
+    no candidate has such a category."""
+    total_symbols = count_symbols(symbols_dir)
+    for query in candidates:
+        total = count_matching(symbols_dir, query, None)
+        if not 0 < total < total_symbols:
+            continue
+        narrower = [(n, cat) for cat, n in category_counts(symbols_dir, query).items() if 0 < n < total]
+        if narrower:
+            n, cat = min(narrower, key=lambda x: (-x[0], x[1]))
+            return query, cat, total, n
+    return None
 
 
 def has_symbols(symbols_dir):
