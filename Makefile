@@ -68,10 +68,14 @@ sample-svg: ## SVG sample set for all variants; checks that rsvg-convert can ren
 	@echo "SVG sample set renders OK"
 
 centering: sample ## Check that every symbol is centred on the folder (needs the PNG sample set)
-	@for t in $$(echo "$(THEMES)" | tr ',' ' '); do \
+	@tmp=$$(mktemp) || exit 1; trap 'rm -f "$$tmp"' EXIT; \
+	for t in $$(echo "$(THEMES)" | tr ',' ' '); do \
 	  d=$(DIST)/$$t/256; [ -d "$$d" ] || continue; \
 	  echo "== $$d"; \
-	  $(PYTHON) tools/check_centering.py "$$d" --max-offset 1.0 | head -3 || exit 1; \
+	  status=0; \
+	  $(PYTHON) tools/check_centering.py "$$d" --max-offset 1.0 > "$$tmp" || status=$$?; \
+	  head -3 "$$tmp"; \
+	  [ "$$status" -eq 0 ] || exit "$$status"; \
 	done
 
 sheets: sample ## Contact sheets (one picture per variant) for eyeballing, in sheets/
