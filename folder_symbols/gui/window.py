@@ -194,15 +194,9 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
             self._reset(targets)
             return
         heading, body, details = reset_confirmation(targets)
-        dialog = Adw.AlertDialog(heading=heading, body=body)
-        dialog.set_extra_child(self._details(details))
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("reset", "Reset")
-        dialog.set_response_appearance("reset", Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response("cancel")
-        dialog.set_close_response("cancel")
-        dialog.connect("response", lambda _d, response: response == "reset" and self._reset(targets))
-        dialog.present(self)
+        self._alert(heading, body, details, responses=(("cancel", "Cancel"), ("reset", "Reset")),
+                    destructive="reset", default="cancel", close="cancel",
+                    on_response=lambda response: response == "reset" and self._reset(targets))
 
     def _reset(self, targets):
         self._run(lambda: self._backend.reset_func(list(targets)), reset_outcome)
@@ -262,23 +256,14 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
                 self._warned.add(line)
                 warn(line)
         question = cleanup_dialog(plan)
-        dialog = Adw.AlertDialog(heading=question.heading, body=question.body)
-        if question.details:
-            dialog.set_extra_child(self._details(question.details))
         if not question.confirm:
-            dialog.add_response("ok", "OK")
-            dialog.set_default_response("ok")
-            dialog.set_close_response("ok")
-            dialog.present(self)
+            self._alert(question.heading, question.body, question.details, default="ok", close="ok")
             return
         paths = tuple(e.folder for e in plan.stale)       # frozen; run_cleanup checks each one again
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("remove", "Remove")
-        dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response("cancel")
-        dialog.set_close_response("cancel")
-        dialog.connect("response", lambda _d, response: response == "remove" and self._cleanup(paths))
-        dialog.present(self)
+        self._alert(question.heading, question.body, question.details,
+                    responses=(("cancel", "Cancel"), ("remove", "Remove")),
+                    destructive="remove", default="cancel", close="cancel",
+                    on_response=lambda response: response == "remove" and self._cleanup(paths))
 
     def _cleanup(self, paths):
         if self._busy:
@@ -291,10 +276,27 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         if outcome.toast:
             self._toasts.add_toast(Adw.Toast(title=outcome.toast))
             return
-        dialog = Adw.AlertDialog(heading=outcome.title, body=outcome.body)
-        dialog.add_response("ok", "OK")
-        dialog.set_default_response("ok")
-        dialog.set_close_response("ok")
+        self._alert(outcome.title, outcome.body, default="ok", close="ok")
+
+    def _alert(self, heading, body, details="", responses=(("ok", "OK"),), default=None, close=None,
+               destructive=None, on_response=None):
+        """Present an Adw.AlertDialog on the window: heading and body, details (if any) in a scrolled label
+        under them, the responses ((id, label), in this order), destructive (an id) shown as destructive,
+        default and close the default and the close (Escape) response (None: not set), and
+        on_response(id) called with the response chosen."""
+        dialog = Adw.AlertDialog(heading=heading, body=body)
+        if details:
+            dialog.set_extra_child(self._details(details))
+        for response, label in responses:
+            dialog.add_response(response, label)
+        if destructive is not None:
+            dialog.set_response_appearance(destructive, Adw.ResponseAppearance.DESTRUCTIVE)
+        if default is not None:
+            dialog.set_default_response(default)
+        if close is not None:
+            dialog.set_close_response(close)
+        if on_response is not None:
+            dialog.connect("response", lambda _d, response: on_response(response))
         dialog.present(self)
 
     @staticmethod
@@ -307,13 +309,6 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
                                   max_content_height=DETAILS_MAX_HEIGHT, hscrollbar_policy=Gtk.PolicyType.NEVER)
 
     def _show_outcome(self, outcome):
-        dialog = Adw.AlertDialog(heading=outcome.title, body=outcome.body)
-        if outcome.details:
-            dialog.set_extra_child(self._details(outcome.details))
-        if outcome.close_button:
-            dialog.add_response("close", "Close Window")
-        dialog.add_response("ok", "OK")
-        dialog.set_default_response("ok")
-        dialog.set_close_response("ok")
-        dialog.connect("response", lambda _d, response: response == "close" and self.close())
-        dialog.present(self)
+        responses = ((("close", "Close Window"),) if outcome.close_button else ()) + (("ok", "OK"),)
+        self._alert(outcome.title, outcome.body, outcome.details, responses=responses, default="ok", close="ok",
+                    on_response=lambda response: response == "close" and self.close())
