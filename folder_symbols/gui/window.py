@@ -27,6 +27,9 @@ SIDEBAR_WIDTH_FRACTION = 0.32            # about 270 px at 850 px (mockup .right
 SIDEBAR_MIN_WIDTH = 220
 SIDEBAR_MAX_WIDTH = 300
 DETAILS_MAX_HEIGHT = 240                 # folder lists in the dialogs scroll above this height
+# The exceptions a backend call is expected to raise: shown in the dialog, without a traceback on stderr
+RUN_EXPECTED = (ManifestError, ApplyError, RecordError)          # Apply and Reset
+CLEANUP_EXPECTED = (ManifestError, OSError)                      # Clean up
 
 
 @dataclasses.dataclass(frozen=True)
@@ -203,19 +206,10 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
 
     def _run(self, call, outcome_of):
         """Run call() (synchronously) with both buttons blocked, then close the window if every folder was
-        done, else re-read which selected folders have an entry and show the outcome dialog."""
-        self._busy = True
-        self._update_buttons()
-        try:
-            results = call()
-        except Exception as e:                            # every failure ends in a dialog, never a crash
-            if not isinstance(e, (ManifestError, ApplyError, RecordError)):
-                traceback.print_exc()                     # unexpected: keep the details for a bug report
-            outcome = outcome_of(error=e)
-        else:
-            outcome = outcome_of(results=results)
-        finally:
-            self._busy = False
+        done, else re-read which selected folders have an entry and show the outcome dialog. The buttons are
+        not refreshed in between: the window closes, or _recount refreshes them."""
+        results, error = self._busy_call(call, RUN_EXPECTED, refresh=False)
+        outcome = outcome_of(error=error) if error is not None else outcome_of(results=results)
         if outcome.close:
             self.close()
             return
@@ -227,27 +221,30 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         self._recorded = recorded_folders(self._dirs, manifest)
         self._update_buttons()
 
-    # ------------------------------------------------------------- Clean up
-    def _busy_call(self, call):
-        """(value, None) or (None, the exception) of call(), run synchronously with everything blocked."""
+    def _busy_call(self, call, expected, refresh=True):
+        """(value, None) or (None, the exception) of call(), run synchronously with everything blocked. An
+        exception not in expected also prints its traceback. refresh: update the buttons afterwards (False
+        leaves that to the caller)."""
         self._busy = True
         self._update_buttons()
         try:
             return call(), None
         except Exception as e:                            # every failure ends in a dialog, never a crash
-            if not isinstance(e, (ManifestError, OSError)):
-                traceback.print_exc()
+            if not isinstance(e, expected):
+                traceback.print_exc()                     # unexpected: keep the details for a bug report
             return None, e
         finally:
             self._busy = False
-            self._update_buttons()
+            if refresh:
+                self._update_buttons()
 
+    # ------------------------------------------------------------- Clean up
     def _on_cleanup(self):
         """Forget the manifest entries of folders that no longer exist (the rules of `prune`, folders
         outside $HOME not checked): find them, ask, then remove the ones still missing. The window stays."""
         if self._busy:
             return
-        plan, error = self._busy_call(self._backend.plan_cleanup_func)
+        plan, error = self._busy_call(self._backend.plan_cleanup_func, CLEANUP_EXPECTED)
         if error is not None:
             self._show_cleanup_outcome(cleanup_outcome(error=error))
             return
@@ -268,7 +265,7 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
     def _cleanup(self, paths):
         if self._busy:
             return
-        result, error = self._busy_call(lambda: self._backend.run_cleanup_func(list(paths)))
+        result, error = self._busy_call(lambda: self._backend.run_cleanup_func(list(paths)), CLEANUP_EXPECTED)
         self._recount()
         self._show_cleanup_outcome(cleanup_outcome(result, error))
 
