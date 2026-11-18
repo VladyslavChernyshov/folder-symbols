@@ -1,12 +1,11 @@
 """Header bars of the two window panes: GalleryHeader (window buttons, search, categories) above the symbol
 grid, and FolderHeader (selected folder, main menu) above the preview sidebar."""
-import sys
-
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, GObject, Gtk
 
+from folder_symbols.appinfo import warn
 from folder_symbols.gallery import categories, category_tooltip, search_placeholder
 from folder_symbols.selection import panel_title, panel_tooltip
 
@@ -130,12 +129,12 @@ def _cap_menu_height(button):
             return
         scroller = popover.get_child() if isinstance(popover, Gtk.PopoverMenu) else None
         if not isinstance(scroller, Gtk.ScrolledWindow):
-            print("folder-symbols: category menu height not limited (unexpected menu layout)", file=sys.stderr)
+            warn("category menu height not limited (unexpected menu layout)")
             return
         scroller.set_max_content_height(CATEGORY_MENU_MAX_HEIGHT)
         scroller.set_propagate_natural_height(True)
     except Exception as e:                  # never let a cosmetic tweak break the window
-        print(f"folder-symbols: category menu height not limited ({e})", file=sys.stderr)
+        warn(f"category menu height not limited ({e})")
 
 
 def main_menu():

@@ -1,12 +1,11 @@
 """PreviewPanel: the sidebar content with the folder icon for the selected symbol."""
-import sys
-
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, Gtk
 
 from folder_symbols.accents import initial_choice, panel_choice, pick, set_follow, system_accent, system_changed
+from folder_symbols.appinfo import warn
 from folder_symbols.preview import PreviewError, variant_for
 from folder_symbols.gui.accents import AccentPicker
 
@@ -118,7 +117,7 @@ class PreviewPanel(Gtk.Box):
             else:
                 path = self._session.build_plain(variant)
         except PreviewError as e:
-            print(f"folder-symbols: {e}", file=sys.stderr)
+            warn(e)
             self._image.set_from_icon_name("folder")
         else:
             self._image.set_from_gicon(Gio.FileIcon.new(Gio.File.new_for_path(path)))

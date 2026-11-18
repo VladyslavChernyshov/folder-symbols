@@ -130,7 +130,7 @@ def test_symbol_not_in_the_gallery_is_like_no_entry(folders):
     manifest = record(Music=Recipe("nosuch", "purple"))
     state = initial_state(folders("Music"), manifest, SYMBOLS, symbols_dir="/syms")
     assert (state.symbol, state.accent) == (None, None)
-    assert state.message == "folder-symbols: recorded symbol not found in /syms, showing none: nosuch (~/Music)"
+    assert state.message == "recorded symbol not found in /syms, showing none: nosuch (~/Music)"
 
 
 def test_missing_symbol_with_others_found_is_like_one_without_entry(folders):
@@ -215,7 +215,7 @@ def test_unreadable_manifest_counts_as_no_entries():
     finally:
         os.chmod(path, 0o644)
     assert manifest is None
-    assert message.startswith("folder-symbols: cannot read ")
+    assert message.startswith("cannot read ")
 
 
 def test_newer_schema_is_read(folders):

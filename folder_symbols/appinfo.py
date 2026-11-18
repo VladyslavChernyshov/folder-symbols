@@ -1,10 +1,12 @@
 """The application's name, the texts of the welcome page (the window opened without folders), the data of
-the About dialog, and which page the window shows (no GTK)."""
+the About dialog, which page the window shows, and the window's warnings on stderr (no GTK)."""
 import dataclasses
+import sys
 
 from . import __version__
 
 APP_NAME = "Folder Symbols"
+WARNING_PREFIX = "folder-symbols: "     # before every warning the window prints on stderr
 WEBSITE = "https://github.com/VladyslavChernyshov/folder-symbols"
 
 EMPTY_PAGE, MAIN_PAGE = "empty", "main"      # the names of the window's two stack pages
@@ -87,3 +89,9 @@ def page_for(dirs, current=None):
     """The stack page the window shows: MAIN_PAGE once it has folders (and from then on, even without:
     there is no way back to the welcome page), else EMPTY_PAGE. current is the page shown now, or None."""
     return MAIN_PAGE if dirs or current == MAIN_PAGE else EMPTY_PAGE
+
+
+def warn(message):
+    """Print one warning of the window on stderr: WARNING_PREFIX, then message (a text without the prefix,
+    or an exception)."""
+    print(f"{WARNING_PREFIX}{message}", file=sys.stderr)

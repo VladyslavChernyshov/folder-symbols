@@ -10,7 +10,7 @@ import pytest
 
 import folder_symbols
 from folder_symbols.appinfo import (APP_NAME, EMPTY_PAGE, MAIN_PAGE, WELCOME, YARU_ARTWORK, about_info,
-                                    page_for)
+                                    page_for, warn)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -115,6 +115,13 @@ def test_page_for(dirs, current, page):
 
 def test_page_names_differ():
     assert EMPTY_PAGE != MAIN_PAGE
+
+
+# ------------------------------------------------------------- warnings on stderr
+def test_warn_prints_one_prefixed_line(capsys):
+    warn("x")
+    warn(OSError("disk full"))
+    assert capsys.readouterr() == ("", "folder-symbols: x\nfolder-symbols: disk full\n")
 
 
 def test_appinfo_module_does_not_import_gi():

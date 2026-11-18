@@ -1,6 +1,7 @@
 """FolderSymbolsWindow: Adw.ApplicationWindow subclass."""
-import sys
+import dataclasses
 import traceback
+from typing import Callable
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -8,7 +9,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GObject, Gtk
 
 from folder_symbols.apply import ApplyError, RecordError, apply_folders, reset_folders
-from folder_symbols.appinfo import APP_NAME, EMPTY_PAGE, MAIN_PAGE, page_for
+from folder_symbols.appinfo import APP_NAME, EMPTY_PAGE, MAIN_PAGE, page_for, warn
 from folder_symbols.gallery import NO_SYMBOLS_TITLE, load_symbols, no_symbols_description
 from folder_symbols.initial import initial_state, read_manifest, recorded_folders
 from folder_symbols.outcome import (apply_block_reason, apply_outcome, apply_tooltip, cleanup_dialog,
@@ -28,19 +29,26 @@ SIDEBAR_MAX_WIDTH = 300
 DETAILS_MAX_HEIGHT = 240                 # folder lists in the dialogs scroll above this height
 
 
+@dataclasses.dataclass(frozen=True)
+class Backend:
+    """What the window's actions call: apply_func, reset_func for Apply and Reset (apply.apply_folders and
+    apply.reset_folders by default); plan_cleanup_func(), run_cleanup_func(paths) for Clean up
+    (store.plan_cleanup and store.run_cleanup by default). Stubs in tests and self-checks."""
+    apply_func: Callable = apply_folders
+    reset_func: Callable = reset_folders
+    plan_cleanup_func: Callable = plan_cleanup
+    run_cleanup_func: Callable = run_cleanup
+
+
 class FolderSymbolsWindow(Adw.ApplicationWindow):
     # The gallery.Symbol selected in the gallery, or None.
     selected_symbol = GObject.Property(type=GObject.TYPE_PYOBJECT, nick="selected-symbol")
 
-    def __init__(self, preview_session, apply_func=apply_folders, reset_func=reset_folders,
-                 plan_cleanup_func=plan_cleanup, run_cleanup_func=run_cleanup, **kwargs):
-        """apply_func, reset_func: what Apply and Reset call, apply.apply_folders and apply.reset_folders
-        by default; plan_cleanup_func(), run_cleanup_func(paths): what Clean up calls, store.plan_cleanup
-        and store.run_cleanup by default (stubs in tests and self-checks)."""
+    def __init__(self, preview_session, backend=None, **kwargs):
+        """backend: the Backend that Apply, Reset and Clean up call; None for the real functions."""
         super().__init__(title=APP_NAME, **kwargs)
         self._preview_session = preview_session
-        self._apply_func, self._reset_func = apply_func, reset_func
-        self._plan_cleanup_func, self._run_cleanup_func = plan_cleanup_func, run_cleanup_func
+        self._backend = Backend() if backend is None else backend
         self._warned = set()                      # manifest warnings already printed by Clean up
         self._cleanup_action = Gio.SimpleAction.new("clean-up", None)
         self._cleanup_action.connect("activate", lambda *_: self._on_cleanup())
@@ -142,7 +150,7 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         state = initial_state(dirs, manifest, self._symbols, self._symbols_dir)
         for line in (problem, state.message):
             if line:
-                print(line, file=sys.stderr)
+                warn(line)
         self._gallery_header.reset_filter()
         self._panel.set_initial_accent(state.accent)
         self._gallery.select_symbol(state.symbol)
@@ -172,8 +180,8 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         choice, dirs = self._panel.current_choice(), tuple(self._dirs)
         if self._busy or choice.symbol is None or not dirs:
             return
-        self._run(lambda: self._apply_func(list(dirs), choice.symbol.name, choice.accent, dark=choice.dark,
-                                           system_accent=choice.system_accent, symbols_dir=self._symbols_dir),
+        self._run(lambda: self._backend.apply_func(list(dirs), choice.symbol.name, choice.accent, dark=choice.dark,
+                                                   system_accent=choice.system_accent, symbols_dir=self._symbols_dir),
                   apply_outcome)
 
     def _on_reset(self):
@@ -197,7 +205,7 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         dialog.present(self)
 
     def _reset(self, targets):
-        self._run(lambda: self._reset_func(list(targets)), reset_outcome)
+        self._run(lambda: self._backend.reset_func(list(targets)), reset_outcome)
 
     def _run(self, call, outcome_of):
         """Run call() (synchronously) with both buttons blocked, then close the window if every folder was
@@ -245,14 +253,14 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         outside $HOME not checked): find them, ask, then remove the ones still missing. The window stays."""
         if self._busy:
             return
-        plan, error = self._busy_call(self._plan_cleanup_func)
+        plan, error = self._busy_call(self._backend.plan_cleanup_func)
         if error is not None:
             self._show_cleanup_outcome(cleanup_outcome(error=error))
             return
         for line in plan.warnings:                        # once per window, not on every click
             if line not in self._warned:
                 self._warned.add(line)
-                print(f"folder-symbols: {line}", file=sys.stderr)
+                warn(line)
         question = cleanup_dialog(plan)
         dialog = Adw.AlertDialog(heading=question.heading, body=question.body)
         if question.details:
@@ -275,7 +283,7 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
     def _cleanup(self, paths):
         if self._busy:
             return
-        result, error = self._busy_call(lambda: self._run_cleanup_func(list(paths)))
+        result, error = self._busy_call(lambda: self._backend.run_cleanup_func(list(paths)))
         self._recount()
         self._show_cleanup_outcome(cleanup_outcome(result, error))
 

@@ -7,13 +7,11 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib
 
-from folder_symbols.apply import apply_folders, reset_folders
 from folder_symbols.appinfo import APP_NAME
 from folder_symbols.preview import PreviewSession
-from folder_symbols.store import plan_cleanup, run_cleanup
 from folder_symbols.selection import launch_argv, resolve_selection, selection_error
 from folder_symbols.gui.welcome import about_dialog
-from folder_symbols.gui.window import FolderSymbolsWindow
+from folder_symbols.gui.window import Backend, FolderSymbolsWindow
 
 APP_ID = "io.github.VladyslavChernyshov.FolderSymbols"
 APP_ID_ENV = "FOLDER_SYMBOLS_APP_ID"     # another application id, for the GUI harness (tools/gui_check)
@@ -26,11 +24,11 @@ def _app_id():
 
 
 class FolderSymbolsApplication(Adw.Application):
-    def __init__(self, apply_func=apply_folders, reset_func=reset_folders, plan_cleanup_func=plan_cleanup,
-                 run_cleanup_func=run_cleanup):
-        """apply_func, reset_func: what the window's Apply and Reset call, apply.apply_folders and
-        apply.reset_folders by default; plan_cleanup_func, run_cleanup_func: what Clean up calls,
-        store.plan_cleanup and store.run_cleanup by default (stubs in self-checks)."""
+    def __init__(self, **backend_funcs):
+        """backend_funcs: the keyword arguments of window.Backend (apply_func, reset_func, plan_cleanup_func,
+        run_cleanup_func), what the window's Apply, Reset and Clean up call; the real functions by default
+        (stubs in self-checks)."""
+        backend = Backend(**backend_funcs)
         super().__init__(
             application_id=_app_id(),
             flags=Gio.ApplicationFlags.HANDLES_OPEN,
@@ -38,8 +36,7 @@ class FolderSymbolsApplication(Adw.Application):
         GLib.set_application_name(APP_NAME)
         self._window = None
         self._preview_session = None
-        self._apply_func, self._reset_func = apply_func, reset_func
-        self._plan_cleanup_func, self._run_cleanup_func = plan_cleanup_func, run_cleanup_func
+        self._backend = backend
 
     def do_startup(self):
         Adw.Application.do_startup(self)
@@ -56,9 +53,7 @@ class FolderSymbolsApplication(Adw.Application):
     def do_activate(self):
         if self._window is None:
             self._window = FolderSymbolsWindow(application=self, preview_session=self._preview_session,
-                                               apply_func=self._apply_func, reset_func=self._reset_func,
-                                               plan_cleanup_func=self._plan_cleanup_func,
-                                               run_cleanup_func=self._run_cleanup_func)
+                                               backend=self._backend)
         self._window.present()
 
     def run(self, argv=None):

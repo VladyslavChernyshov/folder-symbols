@@ -21,16 +21,18 @@ class InitialState:
     symbol: Optional[Symbol] = None     # the gallery.Symbol to select, or None
     accent: Optional[str] = None        # the recorded accent every selected folder shares (an accent name,
                                         # or "system" when they all follow the system accent), or None
-    message: Optional[str] = None       # one line for stderr (recorded symbols not found), or None
+    message: Optional[str] = None       # one line for stderr (recorded symbols not found), or None; without
+                                        # the "folder-symbols: " prefix, which appinfo.warn adds
 
 
 def read_manifest(path=None):
-    """(manifest, message): the manifest read with store.load() (read only, no lock), or (None, one line)
-    when it is damaged or cannot be read. A missing file is an empty manifest."""
+    """(manifest, message): the manifest read with store.load() (read only, no lock), or (None, one line
+    for stderr, without the prefix that appinfo.warn adds) when it is damaged or cannot be read. A missing
+    file is an empty manifest."""
     try:
         return store.load(path), None
     except store.ManifestError as e:
-        return None, f"folder-symbols: {e}; recorded icons are ignored"
+        return None, f"{e}; recorded icons are ignored"
 
 
 def resolve_symbol(recorded, by_name):
@@ -62,7 +64,7 @@ def initial_state(dirs, manifest, symbols, symbols_dir=None):
     message = None
     if missing:
         where = f" in {symbols_dir}" if symbols_dir else ""
-        message = f"folder-symbols: recorded symbol not found{where}, showing none: {', '.join(missing)}"
+        message = f"recorded symbol not found{where}, showing none: {', '.join(missing)}"
     if any(f is None for f in found):
         return InitialState(message=message)
     symbols_found = {s for s, _ in found}
