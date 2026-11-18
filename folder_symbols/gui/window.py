@@ -1,4 +1,4 @@
-"""FolderSymbolsWindow: Adw.ApplicationWindow subclass."""
+"""FolderSymbolsWindow (an Adw.ApplicationWindow subclass) and Backend, the functions its actions call."""
 import dataclasses
 import traceback
 from typing import Callable

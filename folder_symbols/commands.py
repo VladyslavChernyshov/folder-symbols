@@ -1,5 +1,6 @@
-"""The manifest commands of the command line (apply, reset, reset --all, prune, list): they print and stop
-with sys.exit; the work is done by apply.py, the library the window uses too."""
+"""The manifest commands of the command line (apply, reset, reset --all, prune, list): they print, and apply,
+reset and reset --all stop with sys.exit on an error; the work is done by apply.py, the library the window
+uses too."""
 import contextlib, os, shlex, sys
 
 from . import accents, store, yaru

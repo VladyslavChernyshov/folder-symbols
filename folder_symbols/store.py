@@ -324,11 +324,6 @@ def icon_status(folder, get_icon, icons=None):
     return "ok" if target and os.path.commonpath([os.path.abspath(target), icons]) == icons else "other icon"
 
 
-def statuses(get_icon, path=None, icons=None):
-    """[(Entry, status)] for every usable entry; see icon_status."""
-    return [(e, icon_status(e.folder, get_icon, icons)) for e in entries(path)]
-
-
 def is_external(folder):
     """True for a folder outside $HOME (stored with an absolute path; its drive may not be mounted)."""
     return os.path.isabs(folder_key(folder))

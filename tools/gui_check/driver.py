@@ -16,7 +16,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk
 
-from registry import FAIL, INCOMPLETE, PASS, Fail, Incomplete, Recorder
+from registry import FAIL, INCOMPLETE, Fail, Incomplete, Recorder
 from stubs import Backend
 
 HERE = os.path.dirname(os.path.abspath(__file__))
