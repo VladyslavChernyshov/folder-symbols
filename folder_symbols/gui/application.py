@@ -8,11 +8,12 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib
 
 from folder_symbols.apply import apply_folders, reset_folders
+from folder_symbols.appinfo import APP_NAME
 from folder_symbols.preview import PreviewSession
 from folder_symbols.store import plan_cleanup, run_cleanup
 from folder_symbols.selection import launch_argv, resolve_selection, selection_error
 from folder_symbols.gui.welcome import about_dialog
-from folder_symbols.gui.window import APP_TITLE, FolderSymbolsWindow
+from folder_symbols.gui.window import FolderSymbolsWindow
 
 APP_ID = "io.github.VladyslavChernyshov.FolderSymbols"
 APP_ID_ENV = "FOLDER_SYMBOLS_APP_ID"     # another application id, for the GUI harness (tools/gui_check)
@@ -34,7 +35,7 @@ class FolderSymbolsApplication(Adw.Application):
             application_id=_app_id(),
             flags=Gio.ApplicationFlags.HANDLES_OPEN,
         )
-        GLib.set_application_name(APP_TITLE)
+        GLib.set_application_name(APP_NAME)
         self._window = None
         self._preview_session = None
         self._apply_func, self._reset_func = apply_func, reset_func

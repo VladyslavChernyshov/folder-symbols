@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 from conftest import SYMBOLS_DIR
-from folder_symbols.gallery import (Symbol, categories, category_tooltip, list_symbols,
-                                    matches, search_placeholder)
+from folder_symbols import gallery
+from folder_symbols.gallery import (NO_SYMBOLS_TITLE, Symbol, categories, category_tooltip, list_symbols,
+                                    load_symbols, matches, no_symbols_description, search_placeholder)
 from folder_symbols.symbols import default_symbols_dir, YARU_SYMBOLS
 
 ROOT = Path(__file__).parent.parent
@@ -81,6 +82,58 @@ def test_empty_directory(tmp_path):
 
 def test_missing_directory(tmp_path):
     assert list_symbols(str(tmp_path / "missing")) == []
+
+
+# ---------------------------------------------------------------------------
+# load_symbols and the page shown instead of the gallery
+# ---------------------------------------------------------------------------
+
+def test_load_symbols_missing_directory(tmp_path):
+    folder = str(tmp_path / "missing")
+    assert load_symbols(folder) == ([], f"Folder does not exist: {folder}")
+
+
+def test_load_symbols_path_is_a_file(tmp_path):
+    path = touch(tmp_path, "star-symbolic.svg")
+    assert load_symbols(str(path)) == ([], f"Folder does not exist: {path}")
+
+
+def test_load_symbols_empty_directory(tmp_path):
+    assert load_symbols(str(tmp_path)) == ([], f"No *-symbolic.svg files in {tmp_path}")
+
+
+def test_load_symbols_no_symbolic_files(tmp_path):
+    touch(tmp_path, "actions/plain.svg")
+    touch(tmp_path, "actions/readme.txt")
+    assert load_symbols(str(tmp_path)) == ([], f"No *-symbolic.svg files in {tmp_path}")
+
+
+def test_load_symbols_read_error_uses_strerror(tmp_path, monkeypatch):
+    def unreadable(_symbols_dir):
+        raise PermissionError(13, "Permission denied")
+    monkeypatch.setattr(gallery, "list_symbols", unreadable)
+    assert load_symbols(str(tmp_path)) == ([], f"Cannot read {tmp_path}: Permission denied")
+
+
+def test_load_symbols_read_error_without_strerror(tmp_path, monkeypatch):
+    def broken(_symbols_dir):
+        raise OSError("boom")
+    monkeypatch.setattr(gallery, "list_symbols", broken)
+    assert load_symbols(str(tmp_path)) == ([], f"Cannot read {tmp_path}: boom")
+
+
+def test_load_symbols_found(tmp_path):
+    touch(tmp_path, "actions/star-symbolic.svg")
+    symbols, problem = load_symbols(str(tmp_path))
+    assert problem is None
+    assert symbols == list_symbols(str(tmp_path))
+    assert names(symbols) == ["star"]
+
+
+def test_no_symbols_texts():
+    assert NO_SYMBOLS_TITLE == "Symbols not found"
+    assert no_symbols_description("X") == ("X\n\nInstall yaru-theme-icon or point YARU_SYMBOLS_DIR at a folder "
+                                           "with *-symbolic.svg files.")
 
 
 # ---------------------------------------------------------------------------

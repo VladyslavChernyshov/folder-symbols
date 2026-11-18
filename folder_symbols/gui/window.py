@@ -1,5 +1,4 @@
 """FolderSymbolsWindow: Adw.ApplicationWindow subclass."""
-import os
 import sys
 import traceback
 
@@ -10,7 +9,7 @@ from gi.repository import Adw, Gio, GObject, Gtk
 
 from folder_symbols.apply import ApplyError, RecordError, apply_folders, reset_folders
 from folder_symbols.appinfo import APP_NAME, EMPTY_PAGE, MAIN_PAGE, page_for
-from folder_symbols.gallery import list_symbols
+from folder_symbols.gallery import NO_SYMBOLS_TITLE, load_symbols, no_symbols_description
 from folder_symbols.initial import initial_state, read_manifest, recorded_folders
 from folder_symbols.outcome import (apply_block_reason, apply_outcome, apply_tooltip, cleanup_dialog,
                                     cleanup_enabled, cleanup_outcome, reset_button_state, reset_confirmation,
@@ -22,7 +21,6 @@ from folder_symbols.gui.header import FolderHeader, GalleryHeader, main_menu
 from folder_symbols.gui.preview import PreviewPanel
 from folder_symbols.gui.welcome import welcome_page
 
-APP_TITLE = APP_NAME
 DEFAULT_SIZE = (850, 600)                # mockup .win
 SIDEBAR_WIDTH_FRACTION = 0.32            # about 270 px at 850 px (mockup .right)
 SIDEBAR_MIN_WIDTH = 220
@@ -39,7 +37,7 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         """apply_func, reset_func: what Apply and Reset call, apply.apply_folders and apply.reset_folders
         by default; plan_cleanup_func(), run_cleanup_func(paths): what Clean up calls, store.plan_cleanup
         and store.run_cleanup by default (stubs in tests and self-checks)."""
-        super().__init__(title=APP_TITLE, **kwargs)
+        super().__init__(title=APP_NAME, **kwargs)
         self._preview_session = preview_session
         self._apply_func, self._reset_func = apply_func, reset_func
         self._plan_cleanup_func, self._run_cleanup_func = plan_cleanup_func, run_cleanup_func
@@ -90,13 +88,13 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
             sidebar_position=Gtk.PackType.END, collapsed=False, show_sidebar=True,
             sidebar_width_fraction=SIDEBAR_WIDTH_FRACTION,
             min_sidebar_width=SIDEBAR_MIN_WIDTH, max_sidebar_width=SIDEBAR_MAX_WIDTH,
-            content=self._build_content(self._symbols_dir), sidebar=sidebar,
+            content=self._build_content(), sidebar=sidebar,
         )
 
-    def _build_content(self, symbols_dir):
-        """The gallery pane: its header bar over the symbol grid, or over a status page when symbols_dir
-        has no symbols. The divider under the header while the grid is scrolled is the ToolbarView's."""
-        symbols, problem = self._load_symbols(symbols_dir)
+    def _build_content(self):
+        """The gallery pane: its header bar over the symbol grid, or over a status page when the symbols
+        directory has no symbols. The divider under the header while the grid is scrolled is the ToolbarView's."""
+        symbols, problem = load_symbols(self._symbols_dir)
         header = self._gallery_header = GalleryHeader(symbols, name="gallery-header")
         header.search.set_key_capture_widget(self)      # typing anywhere in the window starts the search
         view = Adw.ToolbarView()
@@ -114,24 +112,10 @@ class FolderSymbolsWindow(Adw.ApplicationWindow):
         return view
 
     @staticmethod
-    def _load_symbols(symbols_dir):
-        """Return (symbols, problem); problem is a message when there is nothing to show."""
-        if not os.path.isdir(symbols_dir):
-            return [], f"Folder does not exist: {symbols_dir}"
-        try:
-            symbols = list_symbols(symbols_dir)
-        except OSError as e:
-            return [], f"Cannot read {symbols_dir}: {e.strerror or e}"
-        if not symbols:
-            return [], f"No *-symbolic.svg files in {symbols_dir}"
-        return symbols, None
-
-    @staticmethod
     def _no_symbols(reason):
         return Adw.StatusPage(
-            title="Symbols not found",
-            description=f"{reason}\n\nInstall yaru-theme-icon or point YARU_SYMBOLS_DIR at a folder with "
-                        "*-symbolic.svg files.",
+            title=NO_SYMBOLS_TITLE,
+            description=no_symbols_description(reason),
             icon_name="dialog-warning-symbolic",
             vexpand=True, name="no-symbols-page",
         )
