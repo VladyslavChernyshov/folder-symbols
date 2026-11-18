@@ -296,6 +296,19 @@ def test_apply_that_fails_in_gio_is_not_recorded(isolated_home, gio, sym):
     assert store.lookup(d) is None
 
 
+def test_apply_with_a_theme_that_is_not_a_yaru_variant_is_not_recorded(isolated_home, gio, sym, capsys):
+    from conftest import ICONS_ROOT
+    themes = isolated_home / ".local" / "share" / "icons"
+    themes.mkdir(parents=True)
+    (themes / "Custom").symlink_to(os.path.join(ICONS_ROOT, "Yaru"))    # a theme under another name
+    d = folder(isolated_home, "F")
+    cli.main(["apply", d, sym, "--theme", "Custom"])
+    assert capsys.readouterr().err == ("warning: 'Custom' is not a Yaru variant, so ~/F is not recorded in the "
+                                       "manifest ('list' and 'reset --all' will not see it)\n")
+    assert gio.icons == {d: "file://" + os.path.join(store.icons_dir(), "Custom-sq.svg")}
+    assert not os.path.exists(store.manifest_path())
+
+
 # ------------------------------------------------------------- reset
 def test_reset_removes_the_icon_and_the_entry(isolated_home, gio, sym):
     d = folder(isolated_home, "F")
@@ -314,6 +327,16 @@ def test_reset_of_a_missing_folder_forgets_it(isolated_home, gio, sym, capsys):
     assert store.lookup(d) is None
     with pytest.raises(SystemExit, match="no such folder"):
         cli.main(["reset", d])
+
+
+def test_reset_that_fails_in_gio_exits_and_keeps_the_entry(isolated_home, gio, sym):
+    d = folder(isolated_home, "F")
+    cli.main(["apply", d, sym])
+    gio.fail.add(d)
+    with pytest.raises(SystemExit) as e:
+        cli.main(["reset", d])
+    assert e.value.code == f"gio failed: fake failure on {d}"     # printed to stderr, exit status 1
+    assert store.lookup(d) is not None and d in gio.icons
 
 
 @pytest.mark.parametrize("args", [["reset"], ["reset", "/tmp", "--all"]])
@@ -556,6 +579,16 @@ def test_prune_keeps_folders_below_a_dangling_symlinked_parent(isolated_home, gi
            "target)" in out
     assert "removed   ~/Disk/X" in out and "removed   ~/Gone" in out and "Removed 2 of 3 entries" in out
     assert [e.folder for e in store.entries()] == [below_dangling]
+
+
+# ------------------------------------------------------------- the manifest's warnings on the command line
+@pytest.mark.parametrize("args", [["apply", "F", "SYM"], ["reset", "F"], ["reset", "--all"], ["list"], ["prune"]],
+                         ids=["apply", "reset", "reset-all", "list", "prune"])
+def test_cli_commands_print_the_manifest_warnings(isolated_home, gio, sym, capsys, args):
+    d = folder(isolated_home, "F")
+    write_manifest({"schema_version": store.SCHEMA_VERSION, "folders": ["junk"]})
+    cli.main([{"F": d, "SYM": sym}.get(arg, arg) for arg in args])
+    assert capsys.readouterr().err == f"warning: {store.manifest_path()}: entry 1 has no valid path, skipped\n"
 
 
 # ------------------------------------------------------------- plan_cleanup / run_cleanup (the window's Clean up)

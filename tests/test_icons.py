@@ -334,6 +334,22 @@ def test_batch_svg_uses_builtin_data_without_icons_root(tmp_path, svg):
     assert (tmp_path / "o" / "Yaru-mate" / "scalable" / "sq.svg").exists()
 
 
+@pytest.mark.skipif(len(THEMES) < 2, reason="needs two installed Yaru themes")
+def test_batch_prints_the_summary_and_the_totals(tmp_path, svg):
+    """The summary counts the outputs left after the sizes where Yaru draws no symbol are dropped."""
+    svg("sq", SQUARE, 'viewBox="0 0 16 16"')
+    out = tmp_path / "o"
+    r = _run("batch", "--symbols-dir", str(tmp_path), "--out", str(out), "--sizes", "svg,16x16,48x48",
+             "--themes", ",".join(THEMES[:2]), "--icons-root", ICONS_ROOT, "--jobs", "1")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == ("skipping 16x16: Yaru draws no symbol at 16 px, the output would just be copies of the "
+                        "plain folder\n"
+                        "1 symbols x 2 themes x 2 outputs (svg, 48x48) = 4 icons\n"
+                        "  1/1\n"
+                        "done, 0 symbols with errors\n")
+    assert len([p for p in out.rglob("*") if p.is_file()]) == 4
+
+
 def test_apply_svg_by_name_dry_run(tmp_path, svg):
     p = svg("sq", SQUARE, 'viewBox="0 0 16 16"')
     r = _run("apply", str(tmp_path), p, "--theme", "Yaru-purple-dark", "--store", str(tmp_path / "s"),

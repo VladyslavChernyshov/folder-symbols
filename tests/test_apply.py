@@ -1,6 +1,7 @@
 """apply_folders: one recipe applied to several folders, shared by the CLI and the window. Everything runs
-in the temporary home of the isolated_home fixture with a stubbed setter; gio itself is never run."""
-import json, os, subprocess, sys
+in the temporary home of the isolated_home fixture with a stubbed setter; gio itself is never run (the gio
+wrappers are tested against a fake gio executable in the test's temporary directory)."""
+import json, os, shutil, subprocess, sys, types
 
 import pytest
 
@@ -431,6 +432,110 @@ def test_reset_of_a_folder_without_an_entry_still_unsets_it(isolated_home):
     unset = Unsetter()
     assert [r.ok for r in reset_folders([d], unset_icon=unset)] == [True] and unset.calls
     assert not os.path.exists(store.manifest_path())               # nothing changed, nothing saved
+
+
+def test_reset_an_os_error_before_anything_is_unset_stays_an_os_error(isolated_home, tmp_path):
+    """The mirror of test_an_os_error_before_anything_is_set_stays_an_os_error: the window's reset_outcome
+    expects a RecordError to carry results, so an early OSError must not become one."""
+    [d] = recorded_in(isolated_home, "A")
+    blocked = tmp_path / "blocked"
+    blocked.write_text("")                                         # the manifest's directory is a file
+    unset = Unsetter()
+    with pytest.raises(OSError) as e:
+        reset_folders([d], manifest_path=str(blocked / "manifest.json"), unset_icon=unset)
+    assert not isinstance(e.value, ap.RecordError) and unset.calls == []
+
+
+# ------------------------------------------------------------- the gio wrappers, against a fake gio on PATH
+FAKE_GIO = """#!/bin/sh
+dir=$(dirname "$0")
+printf '%s\\0' "$@" > "$dir/argv"
+cat "$dir/stdout"
+cat "$dir/stderr" >&2
+exit "$(cat "$dir/status")"
+"""
+
+
+@pytest.fixture
+def fake_gio(isolated_home, tmp_path, monkeypatch):
+    """A fake `gio` in tmp_path, first on PATH (before the conftest stub that exits 99): it records its
+    arguments and answers with the status, stdout and stderr given to reply()."""
+    bindir = tmp_path / "fakebin"
+    bindir.mkdir()
+    (bindir / "gio").write_text(FAKE_GIO)
+    (bindir / "gio").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    assert shutil.which("gio") == str(bindir / "gio")
+
+    def reply(status=0, stdout="", stderr=""):
+        for name, text in (("status", str(status)), ("stdout", stdout), ("stderr", stderr)):
+            (bindir / name).write_text(text)
+
+    def argv():
+        return (bindir / "argv").read_bytes().decode().split("\0")[:-1]
+    reply()
+    return types.SimpleNamespace(reply=reply, argv=argv)
+
+
+def gio_info(*attribute_lines):
+    """What `gio info -a metadata::custom-icon FOLDER` prints: header lines, then the attributes indented."""
+    return ("uri: file:///f\nlocal path: /f\nunix mount: tmpfs /tmp tmpfs rw 0 0\nattributes:\n"
+            + "".join(f"  {line}\n" for line in attribute_lines))
+
+
+def test_gio_set_runs_gio_set_with_the_uri(fake_gio, tmp_path):
+    fake_gio.reply(0, stderr="a warning that is not an error\n")   # only the status counts
+    assert ap.gio_set(str(tmp_path / "F"), "file:///i.svg") is None
+    assert fake_gio.argv() == ["set", str(tmp_path / "F"), "metadata::custom-icon", "file:///i.svg"]
+
+
+def test_gio_unset_runs_gio_set_type_unset(fake_gio, tmp_path):
+    assert ap.gio_unset(str(tmp_path / "F")) is None
+    assert fake_gio.argv() == ["set", "-t", "unset", str(tmp_path / "F"), "metadata::custom-icon"]
+
+
+@pytest.mark.parametrize("stdout, want", [
+    (gio_info("metadata::custom-icon: file:///home/u/a.svg"), "file:///home/u/a.svg"),
+    (gio_info("metadata::custom-icon: file:///home/u/a: b.svg"), "file:///home/u/a: b.svg"),
+    (gio_info(), None),                                            # no custom icon: no attribute line
+    (gio_info("metadata::custom-icon-name: folder-music"), None),  # another attribute with the same prefix
+    # pins current behaviour (an empty value reads as no icon), see the report of TASK 13, finding F1
+    (gio_info("metadata::custom-icon: "), None),
+    (gio_info("metadata::custom-icon: file:///a.svg  "), "file:///a.svg"),
+], ids=["present", "value-with-colon-space", "absent", "other-attribute", "empty-value", "trailing-spaces"])
+def test_gio_custom_icon_parses_gio_info(fake_gio, tmp_path, stdout, want):
+    fake_gio.reply(0, stdout)
+    assert ap.gio_custom_icon(str(tmp_path / "F")) == want
+    assert fake_gio.argv() == ["info", "-a", "metadata::custom-icon", str(tmp_path / "F")]
+
+
+def test_gio_custom_icon_is_none_when_gio_fails(fake_gio, tmp_path):
+    # pins current behaviour (a failure reads as no icon), see the report of TASK 13, finding F1
+    fake_gio.reply(1, gio_info("metadata::custom-icon: file:///a.svg"), "gio: file:///f: No such file\n")
+    assert ap.gio_custom_icon(str(tmp_path / "F")) is None
+
+
+@pytest.mark.parametrize("status, stderr, message", [
+    (1, "gio: file:///f: Operation not supported\n", "gio: file:///f: Operation not supported"),
+    (3, " \n", "gio exited with status 3"),
+], ids=["stderr", "no-stderr"])
+@pytest.mark.parametrize("call", [lambda f: ap.gio_set(f, "file:///i.svg"), ap.gio_unset], ids=["set", "unset"])
+def test_a_gio_failure_is_a_gio_error(fake_gio, tmp_path, call, status, stderr, message):
+    fake_gio.reply(status, stderr=stderr)
+    with pytest.raises(ap.GioError) as e:
+        call(str(tmp_path / "F"))
+    assert str(e.value) == message
+
+
+def test_gio_that_cannot_be_run_is_a_gio_error(isolated_home, tmp_path, monkeypatch):
+    (tmp_path / "empty").mkdir()
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))            # no gio at all
+    f = str(tmp_path / "F")
+    for call in (lambda: ap.gio_set(f, "file:///i.svg"), lambda: ap.gio_unset(f)):
+        with pytest.raises(ap.GioError) as e:
+            call()
+        assert str(e.value) == "cannot run gio: No such file or directory"
+    assert ap.gio_custom_icon(f) is None
 
 
 # ---------------------------------------------------------------- the default PNG size
