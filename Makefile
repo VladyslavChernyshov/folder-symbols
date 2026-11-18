@@ -59,10 +59,20 @@ check: test sample-svg centering cli-help ## Everything CI runs on every push (t
 
 ##@ Generate icons (output goes to dist/, which git ignores)
 sample: ## PNG sample set (256 px) for a few variants and symbols
-	$(PYTHON) folder-symbols batch --out $(DIST) --themes $(THEMES) --sizes 256 --only '$(ONLY)' --jobs 4 | tail -3
+	@tmp=$$(mktemp) || exit 1; trap 'rm -f "$$tmp"' EXIT; \
+	status=0; \
+	$(PYTHON) folder-symbols batch --out $(DIST) --themes $(THEMES) --sizes 256 --only '$(ONLY)' --jobs 4 > "$$tmp" || status=$$?; \
+	tail -3 "$$tmp"; \
+	[ "$$status" -eq 0 ] || exit "$$status"; \
+	grep -q '^done, 0 symbols with errors' "$$tmp" || { echo "batch reported errors" >&2; exit 1; }
 
 sample-svg: ## SVG sample set for all variants; checks that rsvg-convert can render them
-	$(PYTHON) folder-symbols batch --out $(DIST)-svg --themes all --sizes svg --only '$(ONLY)' --jobs 4 | tail -3
+	@tmp=$$(mktemp) || exit 1; trap 'rm -f "$$tmp"' EXIT; \
+	status=0; \
+	$(PYTHON) folder-symbols batch --out $(DIST)-svg --themes all --sizes svg --only '$(ONLY)' --jobs 4 > "$$tmp" || status=$$?; \
+	tail -3 "$$tmp"; \
+	[ "$$status" -eq 0 ] || exit "$$status"; \
+	grep -q '^done, 0 symbols with errors' "$$tmp" || { echo "batch reported errors" >&2; exit 1; }
 	@test "$$(find $(DIST)-svg -name '*.svg' | wc -l)" -gt 100
 	@for f in $$(find $(DIST)-svg -name 'share.svg'); do rsvg-convert -w 128 "$$f" > /dev/null || exit 1; done
 	@echo "SVG sample set renders OK"
