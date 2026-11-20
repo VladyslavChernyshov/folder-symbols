@@ -9,7 +9,9 @@ the warning wording and the session-mode selection (Z17), the exact stderr lines
 (Z18-Z20), the gsettings stub's icon theme file (Z21) and restore_permissions (Z22). Z23-Z32 cover those added
 for E, F, G and H: a dialog left open (Z23), the dialog helpers (Z24), a window the application closes inside
 allow_app_close (Z25) and a close after such a block, which is the user's again (Z26), not_verified (Z27, Z28),
-the declared tracebacks (Z29-Z31) and Stub.during with the result builders (Z32). Z5 needs a person and runs
+the declared tracebacks (Z29-Z31) and Stub.during with the result builders (Z32). Z33-Z36 cover the
+leftover scan after a scenario: it skips Xvfb's descendants (by parent chain, not by name) and survives processes
+that vanish. Z5 needs a person and runs
 only when asked for by its exact id. Z8 expects NOT VERIFIED instead of PASS when the harness has no real
 session bus."""
 import argparse
@@ -500,3 +502,132 @@ def z32(d):
                              plan.skipped, plan.total, plan.warnings),
             ("CleanupPlan", ["/x"], ["/y"], 2, 4, ("w",)))
     d.check("cleanup_result", stubs.cleanup_result(["/x"], ["/y"]), store.CleanupResult(("/x",), ("/y",)))
+
+
+# ------------------------------------------------------------- Z33-Z36: the leftover scan skips Xvfb's descendants
+# Real processes carrying a made-up marker value (so the run's own scan never sees them); the "Xvfb" is the
+# root of a small process tree. Every tree is killed in a finally, group by group.
+TREE_SCRIPT = """import os, subprocess, sys, time
+depth = int(sys.argv[1])
+pids = [os.getpid()]
+if depth:
+    kid = subprocess.Popen([sys.executable, __file__, str(depth - 1)], stdout=subprocess.PIPE, text=True)
+    pids += [int(x) for x in kid.stdout.readline().split()]
+print(*pids, flush=True)
+time.sleep(60)
+"""
+NAMED_SCRIPT = """import subprocess, sys, time
+kid = subprocess.Popen([sys.argv[1], "-c", "import time; time.sleep(60)"])
+print(kid.pid, flush=True)
+time.sleep(60)
+"""
+
+
+class Fakes:
+    """Process groups started by a self-test, with a marker value of their own; all killed on exit."""
+
+    def __init__(self, marker):
+        self.marker, self.groups = marker, []
+        self.env = dict(os.environ, GUI_CHECK_RUN=marker)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        for p in self.groups:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            p.wait()
+
+    def start(self, argv):
+        p = subprocess.Popen(argv, env=self.env, stdout=subprocess.PIPE, text=True, start_new_session=True)
+        self.groups.append(p)
+        return p
+
+    def tree(self, depth):
+        """A root with `depth` nested children; (the root, [pids of the root, its child, ...])."""
+        script = os.path.join(os.environ["TMPDIR"], "tree.py")
+        with open(script, "w") as f:
+            f.write(TREE_SCRIPT)
+        p = self.start([sys.executable, script, str(depth)])
+        return p, [int(x) for x in p.stdout.readline().split()]
+
+    def sleeper(self):
+        return self.start(["sleep", "60"])
+
+    def named_child(self, name):
+        """A process whose parent is another process, itself named `name` (a link to python): (parent, child pid)."""
+        link = os.path.join(os.environ["TMPDIR"], name)
+        if not os.path.lexists(link):
+            os.symlink(os.path.realpath(sys.executable), link)
+        p = self.start([sys.executable, "-c", NAMED_SCRIPT, link])
+        return p, int(p.stdout.readline())
+
+
+def scan_pids(main, marker, root):
+    return sorted(pid for pid, _cmd in main.scan_processes(marker, exclude_tree={root}))
+
+
+@scenario("Z33", "the leftover scan skips the Xvfb process and its child and grandchild", selftest=True,
+          needs_display=False, steps=("tree", "scan"), expect=(PASS, ""))
+def z33(d):
+    main = load_main()
+    with Fakes(f"z33-{os.getpid()}") as fakes:
+        d.step("tree")
+        xvfb, pids = fakes.tree(2)
+        d.check("a root, a child and a grandchild", len(pids), 3)
+        d.step("scan")
+        d.check("nothing reported", scan_pids(main, fakes.marker, xvfb.pid), [])
+        d.check("without an Xvfb all three are reported", sorted(p for p, _c in main.scan_processes(fakes.marker)),
+                sorted(pids))
+
+
+@scenario("Z34", "the leftover scan still reports an unrelated process with the marker, next to the skipped tree",
+          selftest=True, needs_display=False, steps=("processes", "scan"), expect=(PASS, ""))
+def z34(d):
+    main = load_main()
+    with Fakes(f"z34-{os.getpid()}") as fakes:
+        d.step("processes")
+        xvfb, pids = fakes.tree(2)
+        left_running = fakes.sleeper()
+        d.step("scan")
+        d.check("only the unrelated process", scan_pids(main, fakes.marker, xvfb.pid), [left_running.pid])
+
+
+@scenario("Z35", "a process named xkbcomp whose parent chain does not reach Xvfb is reported (no matching by name)",
+          selftest=True, needs_display=False, steps=("processes", "scan"), expect=(PASS, ""))
+def z35(d):
+    main = load_main()
+    with Fakes(f"z35-{os.getpid()}") as fakes:
+        d.step("processes")
+        xvfb, _pids = fakes.tree(2)
+        parent, named = fakes.named_child("xkbcomp")
+        d.check("the child's command name", open(f"/proc/{named}/comm").read().strip(), "xkbcomp")
+        d.step("scan")
+        d.check("the parent and the xkbcomp", scan_pids(main, fakes.marker, xvfb.pid), sorted([parent.pid, named]))
+
+
+@scenario("Z36", "the leftover scan survives a process that is gone and one whose parent is gone",
+          selftest=True, needs_display=False, steps=("gone before reading", "parent gone"), expect=(PASS, ""))
+def z36(d):
+    main = load_main()
+    with Fakes(f"z36-{os.getpid()}") as fakes:
+        d.step("gone before reading")
+        xvfb, _pids = fakes.tree(1)
+        live = fakes.sleeper()
+        gone = subprocess.Popen(["true"])
+        gone.wait()                                   # reaped: its pid is in the listing below but not in /proc
+        real_listdir = os.listdir
+        os.listdir = lambda path: real_listdir(path) + [str(gone.pid)] if path == "/proc" else real_listdir(path)
+        try:
+            found = scan_pids(main, fakes.marker, xvfb.pid)
+        finally:
+            os.listdir = real_listdir
+        d.check("the listed but vanished pid is skipped, the live one reported", found, [live.pid])
+        d.step("parent gone")
+        parent, pids = fakes.tree(1)
+        os.kill(parent.pid, signal.SIGKILL)
+        parent.wait()                                 # the child lives on, with another parent
+        d.check("the orphan is reported, no error", pids[1] in scan_pids(main, fakes.marker, parent.pid), True)

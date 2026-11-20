@@ -7,7 +7,7 @@ and CI does not run it. Run it after changing anything under `folder_symbols/gui
 ```bash
 make gui-check                                   # every scenario, on the harness's own Xvfb
 make gui-check GUI_CHECK_ARGS="-k A5"            # one scenario
-python3 tools/gui_check --self-test              # the harness's own tests (Z1-Z32)
+python3 tools/gui_check --self-test              # the harness's own tests (Z1-Z36)
 python3 tools/gui_check --list                   # scenarios and their flags
 ```
 
@@ -40,6 +40,10 @@ Each scenario runs in its own process (`child.py`) with an environment built fro
 
 Every process the harness starts dies with its parent (`pdeath_exec.py`). After each scenario and at the end,
 `/proc/*/environ` is scanned for processes left behind (`--scan-leftovers` does the same for earlier runs).
+The scan after a scenario skips the harness's own Xvfb and every descendant of it, found through the parent chain
+in `/proc/<pid>/stat` and not by name (Xvfb starts `xkbcomp`, which carries the run marker too); a process whose
+parent chain does not reach Xvfb is reported. The scan at the end of the run, after Xvfb has been stopped, skips
+nothing.
 Before a scenario starts, a preflight checks the display, the application id, that the private bus is not the
 real one (when the harness has a real session bus to compare with), that the package, `HOME`, the manifest and `TMPDIR` are the harness's own, and that the style is
 light; a failed check is a FAIL.
@@ -238,6 +242,7 @@ libadwaita 1.5, but this has not been checked by running it on those versions or
 | Z1-Z4, Z6-Z16 | the harness's own checks: NOT VERIFIED, watchdog, user close (also before the scenario starts, Z12, Z15), killed process, iteration counting, own timeout, real id on the private bus (Z8), kill or non-zero exit after the end event, application diagnostics on stderr, malformed events, exit without a result |
 | Z17-Z22 | warning wording and session selection, `stderr_lines`, the icon theme file, `restore_permissions` |
 | Z23-Z32 | dialog left open, dialog helpers, `allow_app_close`, `not_verified`, `stderr_tracebacks`, `Stub.during` and the builders |
+| Z33-Z36 | the leftover scan: skips Xvfb's child and grandchild, still reports an unrelated process, does not match by name, survives vanished processes |
 | Z5 | manual: you close the window by hand (exact id only) |
 
 ### D2

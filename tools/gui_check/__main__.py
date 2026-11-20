@@ -223,13 +223,39 @@ def random_suffix(n=10):
     return first + "".join(random.choice(string.ascii_letters + string.digits) for _ in range(n - 1))
 
 
-def scan_processes(marker_value=None, exclude=()):
+def parent_pid(pid):
+    """The parent of pid, from /proc/<pid>/stat (the command name is parenthesised and may hold spaces and
+    parentheses, so the fields are counted after the last one). OSError when pid is gone."""
+    with open(f"/proc/{pid}/stat", "rb") as f:
+        return int(f.read().rpartition(b")")[2].split()[1])
+
+
+def in_tree(pid, roots):
+    """True when pid is one of roots or a descendant of one, walking the parent chain. OSError when pid itself
+    is gone; an ancestor that is gone (its children belong to someone else by then) ends the chain: False."""
+    for depth in range(256):
+        if pid in roots:
+            return True
+        if pid <= 1:
+            return False
+        try:
+            pid = parent_pid(pid)
+        except OSError:
+            if depth == 0:
+                raise
+            return False
+    return False
+
+
+def scan_processes(marker_value=None, exclude_tree=()):
     """[(pid, command line)] of this user's processes whose environment has GUI_CHECK_RUN (=marker_value
-    if given), read from /proc/*/environ."""
+    if given), read from /proc/*/environ. The processes in exclude_tree (the harness's Xvfb) and all their
+    descendants are skipped (Xvfb starts xkbcomp, which carries the marker too); a process that is gone
+    while it is being read is skipped."""
     wanted = f"{MARKER}={marker_value}".encode() if marker_value else f"{MARKER}=".encode()
-    found, uid = [], os.getuid()
+    found, uid, roots = [], os.getuid(), set(exclude_tree)
     for entry in os.listdir("/proc"):
-        if not entry.isdigit() or int(entry) in exclude or int(entry) == os.getpid():
+        if not entry.isdigit() or int(entry) == os.getpid():
             continue
         try:
             if os.stat(f"/proc/{entry}").st_uid != uid:
@@ -238,10 +264,13 @@ def scan_processes(marker_value=None, exclude=()):
                 env = f.read().split(b"\0")
             with open(f"/proc/{entry}/cmdline", "rb") as f:
                 cmdline = f.read().replace(b"\0", b" ").decode(errors="replace").strip()
+            if not any(e == wanted if marker_value else e.startswith(wanted) for e in env):
+                continue
+            if roots and in_tree(int(entry), roots):
+                continue
         except OSError:
             continue
-        if any(e == wanted if marker_value else e.startswith(wanted) for e in env):
-            found.append((int(entry), cmdline))
+        found.append((int(entry), cmdline))
     return found
 
 
@@ -671,7 +700,7 @@ class Run:
             for p in list(self.procs):
                 if p is not self.xvfb and p.poll() is not None:
                     self.procs.remove(p)
-        left = scan_processes(self.run_id, exclude={self.xvfb.pid} if self.xvfb else set())
+        left = scan_processes(self.run_id, exclude_tree={self.xvfb.pid} if self.xvfb else set())
         res.scan = ("leftover scan after the scenario (/proc/*/environ, Xvfb excluded): "
                     + (", ".join(f"{pid} {cmd}" for pid, cmd in left) if left else "none"))
         if left:
