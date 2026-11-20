@@ -222,14 +222,39 @@ def gradient_stop_errors(css):
     return errors
 
 
+def _is_gi_import(node):
+    """An absolute `import gi...` / `from gi... import ...`."""
+    if isinstance(node, ast.Import):
+        return any(a.name.split(".")[0] == "gi" for a in node.names)
+    return isinstance(node, ast.ImportFrom) and node.level == 0 and (node.module or "").split(".")[0] == "gi"
+
+
+def _gi_names(tree):
+    """The names that gi imports bind anywhere in the module: `import gi` and `import gi.repository` bind gi,
+    `import gi.repository as R` binds R, `from gi.repository import Gtk, Gdk as D` binds Gtk and D."""
+    names = set()
+    for node in ast.walk(tree):
+        if not _is_gi_import(node):
+            continue
+        for alias in node.names:
+            if alias.name == "*":
+                pytest.fail(f"{GUI_ACCENTS.name}:{node.lineno}: `from gi... import *` binds names the test cannot "
+                            f"know; import them by name, or teach _gi_names about them")
+            bound = alias.name.split(".")[0] if isinstance(node, ast.Import) else alias.name
+            names.add(alias.asname or bound)
+    return names
+
+
 def _gui_accents_namespace():
     """Run the top-level statements of gui/accents.py that need no GTK (constants, imports of our own modules,
-    function definitions; not the gi imports or the classes), so the CSS is the text the window really loads."""
+    function definitions), so the CSS is the text the window really loads. A statement is skipped if it imports
+    from gi or mentions a name a gi import bound (a class that depends on gi, a `gi.require_version(...)` call,
+    a try/if around either); anything else is run, and a failure names the file and line."""
     tree = ast.parse(GUI_ACCENTS.read_text(), str(GUI_ACCENTS))
+    gi_names = _gi_names(tree)
     namespace = {"__name__": "gui_accents_css"}
     for node in tree.body:
-        if isinstance(node, ast.ClassDef) or any(isinstance(n, ast.Name) and n.id == "gi" for n in ast.walk(node)) \
-                or (isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "gi"):
+        if any(_is_gi_import(n) or (isinstance(n, ast.Name) and n.id in gi_names) for n in ast.walk(node)):
             continue
         try:
             exec(compile(ast.Module([node], []), str(GUI_ACCENTS), "exec"), namespace)
