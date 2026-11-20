@@ -29,9 +29,10 @@ LEGEND_DOT_RADIUS = 2                    # its inner dot, 4 px across
 # the accent foreground on a thin shade ring. The legend marker is a miniature system swatch in the GNOME
 # accent (@accent_bg_color with an @accent_fg_color dot), so it may differ slightly from the swatch. The
 # fills are the only literal colours, generated from the folder colours in assets/themes.json (light, and
-# under .dark the dark variant's).
-_DOT = (f"radial-gradient(circle, @accent_fg_color {DOT_RADIUS}px, @shade_color {DOT_RADIUS}px "
-        f"{DOT_RADIUS + 1}px, transparent {DOT_RADIUS + 1}px)")
+# under .dark the dark variant's). Every colour stop has one position: a stop with two is rejected by
+# GTK 4.18.6 (the whole declaration is dropped), and the API floor, 4.14, takes one.
+_DOT = (f"radial-gradient(circle, @accent_fg_color {DOT_RADIUS}px, @shade_color {DOT_RADIUS}px, "
+        f"@shade_color {DOT_RADIUS + 1}px, transparent {DOT_RADIUS + 1}px)")
 BASE_CSS = f"""
 checkbutton.accent-swatch {{ padding: 0; }}
 checkbutton.accent-swatch > radio {{

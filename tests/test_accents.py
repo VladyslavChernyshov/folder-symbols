@@ -1,5 +1,7 @@
 """The accent picker's data (folder_symbols/accents.py): no GTK; gsettings is conftest's failing stub."""
+import ast
 import json
+import re
 import subprocess
 import sys
 from dataclasses import FrozenInstanceError
@@ -179,3 +181,79 @@ def test_the_choice_drawn_is_the_choice_applied():
     for c in (FOLLOWING, PINNED, set_follow(PINNED, True), pick(FOLLOWING, "sage")):
         p = panel_choice(c, False, None)
         assert (p.system_accent if p.accent == SYSTEM_ACCENT else p.accent) == c.selected
+
+
+# ------------------------------------------------------------- the window's CSS (still no GTK)
+GUI_ACCENTS = ROOT / "folder_symbols" / "gui" / "accents.py"
+_LENGTH = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)(px|%|pt|em|rem|ex|cm|mm|in|pc)?$")
+_STOP_KEYWORDS = {"circle", "ellipse", "to", "at", "closest-side", "farthest-side", "closest-corner",
+                  "farthest-corner"}
+
+
+def _split_top(text, on_space):
+    """Split on commas (or runs of whitespace) outside parentheses, so rgb(0 0 0 / 50%) stays one piece."""
+    parts, depth, cur = [], 0, ""
+    for ch in text:
+        depth += (ch == "(") - (ch == ")")
+        if depth == 0 and (ch.isspace() if on_space else ch == ","):
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def gradient_stop_errors(css):
+    """The colour stops inside every *-gradient(...) of `css` that have more than one position. GTK 4.14's
+    parser takes one position per stop, and drops the whole declaration on a second one."""
+    errors = []
+    for m in re.finditer(r"[\w-]*gradient\(", css):
+        depth, i = 1, m.end()
+        while i < len(css) and depth:
+            depth += (css[i] == "(") - (css[i] == ")")
+            i += 1
+        for arg in _split_top(css[m.end():i - 1], on_space=False):
+            tokens = _split_top(arg, on_space=True)
+            if not tokens or tokens[0] in _STOP_KEYWORDS or "at" in tokens or re.match(r"^[\d.]+(deg|rad|turn)$", tokens[0]):
+                continue                                    # the shape, size, direction or angle argument
+            if sum(bool(_LENGTH.match(t)) for t in tokens[1:]) > 1:
+                errors.append(f"{m.group(0)}...{arg}")
+    return errors
+
+
+def _gui_accents_namespace():
+    """Run the top-level statements of gui/accents.py that need no GTK (constants, imports of our own modules,
+    function definitions; not the gi imports or the classes), so the CSS is the text the window really loads."""
+    tree = ast.parse(GUI_ACCENTS.read_text(), str(GUI_ACCENTS))
+    namespace = {"__name__": "gui_accents_css"}
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) or any(isinstance(n, ast.Name) and n.id == "gi" for n in ast.walk(node)) \
+                or (isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "gi"):
+            continue
+        try:
+            exec(compile(ast.Module([node], []), str(GUI_ACCENTS), "exec"), namespace)
+        except Exception as e:
+            pytest.fail(f"{GUI_ACCENTS.name}:{node.lineno}: this top-level statement cannot be evaluated without "
+                        f"GTK ({type(e).__name__}: {e}); move what it needs into a GTK-free module or teach "
+                        f"_gui_accents_namespace to skip it")
+    for name in ("BASE_CSS", "_accent_css"):
+        assert name in namespace, f"{GUI_ACCENTS.name} no longer defines {name}; update _gui_accents_namespace"
+    return namespace
+
+
+def test_gui_css_has_no_two_position_color_stops():
+    """GTK 4.18.6 rejects `color 3px 4px` in a radial-gradient (and drops the declaration); the API floor
+    is 4.14, which takes one position per stop. Checks the generated text, not a copy of it."""
+    namespace = _gui_accents_namespace()
+    css = namespace["BASE_CSS"] + namespace["_accent_css"]()
+    assert css.count("gradient(") >= 2, "no gradients found: the check would pass without looking at anything"
+    assert gradient_stop_errors(css) == []
+
+
+def test_gradient_stop_checker():
+    assert gradient_stop_errors("a { background-image: radial-gradient(circle, red 3px, blue 3px 4px); }")
+    assert gradient_stop_errors("a { background-image: linear-gradient(to right, red 1px 2px, blue); }")
+    assert not gradient_stop_errors("radial-gradient(circle, red 3px, blue 3px, blue 4px, transparent 4px)")
+    assert not gradient_stop_errors("radial-gradient(circle at 50% 50%, rgb(0 0 0 / 50%) 3px, @x 4px)")
+    assert not gradient_stop_errors("linear-gradient(45deg, red, blue 50%)")
